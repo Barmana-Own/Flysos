@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
+import { parseAdminAccessLevels } from '../services/adminPermissionService.js';
 
 export function requireAdminAuth(req, _res, next) {
   if (!env.jwtSecret) {
@@ -51,6 +52,7 @@ export function requireAdminAuth(req, _res, next) {
       name: String(payload.name || payload.username || ''),
       role: String(payload.role || 'expert_domestic'),
       accessLevel: String(payload.accessLevel || 'under_review'),
+      accessLevels: parseAdminAccessLevels(payload.accessLevels, payload.accessLevel),
     };
 
     next();

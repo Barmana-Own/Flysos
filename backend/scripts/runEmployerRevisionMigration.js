@@ -29,6 +29,7 @@ try {
   await connection.beginTransaction();
 
   await addColumn(connection, 'AdminUser', 'permissions', 'LONGTEXT NULL');
+  await addColumn(connection, 'AdminUser', 'accessLevels', 'LONGTEXT NULL');
   await addColumn(connection, 'AdminUser', 'positionTitle', 'VARCHAR(191) NULL');
 
   await addColumn(connection, 'Claim', 'ocrStatus', "VARCHAR(30) NOT NULL DEFAULT 'pending'");

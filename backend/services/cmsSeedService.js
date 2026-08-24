@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 const block = (id, type, order, content = {}, styles = {}, children = []) => ({
   id, type, order, visible: true, content, styles, settings: {},
   animations: { type: 'none', delay: 0, duration: 500 }, responsive: {}, children,
@@ -24,7 +26,7 @@ const homeBlocks = [
   block('home-compensation', 'pricing', 3, { title: 'چقدر خسارت می‌گیرید؟', description: 'مبالغ تقریبی بر اساس قوانین هواپیمایی کشوری', items: [
     { id: 'delay-2-5', title: 'تاخیر ۲ تا ۵ ساعت', price: '۳۰٪ مبلغ بلیت', description: 'پرداخت غرامت نقدی بر اساس قیمت بلیت همراه با پذیرایی.' },
     { id: 'delay-over-5', title: 'تاخیر بیش از ۵ ساعت', price: '۱۰۰٪ مبلغ بلیت', description: 'پرداخت غرامت نقدی بر اساس قیمت بلیت همراه با پذیرایی.' },
-    { id: 'cancelled', title: 'ابطال پرواز', price: 'حداقل ۱۰۰٪ بهای بلیت', description: 'مبلغ خسارت را قاضی تعیین می‌کند، معمولاً حداقل ۱۰۰٪ بهای بلیت.', note: 'بسته به زمان اعلام لغو پرواز، مشمول دریافت غرامت قانونی اضافی خواهید بود.' },
+    { id: 'cancelled', title: 'ابطال پرواز', price: 'حداقل ۱۰٪ بهای بلیت', description: 'مبلغ خسارت را قاضی تعیین می‌کند، معمولاً حداقل ۱۰٪ بهای بلیت.', note: 'بسته به زمان اعلام لغو پرواز، مشمول دریافت غرامت قانونی اضافی خواهید بود.' },
   ] }, { background: '#ffffff', color: '#0f172a', padding: '64px 24px' }),
   block('home-process', 'services', 4, { title: 'روند کار چگونه است؟', description: 'از ثبت تا دریافت خسارت - همه چیز آنلاین', items: [
     { id: 'process-1', title: 'ثبت اطلاعات اولیه', description: 'اطلاعات خود و بلیت را در سایت وارد کنید.' },
@@ -51,6 +53,37 @@ const faqItems = [
   ['سامانه ثنا و ثبت وکالت چطور انجام می‌شود؟','ثبت وکالت از طریق سامانه ثنا و با تایید رمز موقت پیامکی مسافر انجام می‌شود.'],
   ['نحوه واریز خسارت چگونه است؟','پس از وصول غرامت، ۸۰٪ وجه از طریق شماره شبای مسافر واریز می‌شود.'],
 ].map(([question, answer], index) => ({ id: `faq-page-${index + 1}`, question, answer }));
+
+const trackSuccessBlocks = [block('track-success', 'section', 0, {
+  step1Label: '۱. اطلاعات هویتی',
+  step2Label: '۲. بارگذاری مدارک',
+  step3Label: '۳. پرسشنامه',
+  step4Label: '۴. ثبت موفق',
+  mobileStep1Label: 'اطلاعات هویتی',
+  mobileStep2Label: 'بارگذاری مدارک',
+  mobileStep3Label: 'پرسشنامه پاسخگویی',
+  mobileStep4Label: 'ثبت موفق پرونده',
+  successTitle: 'درخواست شما با موفقیت ثبت شد',
+  trackingCodeLabel: 'کد پیگیری درخواست شما:',
+  documentsTitle: 'بررسی و ارزیابی مدارک اولیه',
+  documentsDescription: 'مدارک و اطلاعات پرواز شما توسط تیم حقوقی Flysos.ir به سرعت بررسی می‌شود. چنانچه پرواز شما بر اساس مقررات و آیین‌نامه حقوق مسافران سازمان هواپیمایی کشوری مشمول دریافت خسارت نقدی باشد، حداکثر تا ۴۸ ساعت آینده جهت انجام هماهنگی‌های بعدی با شما تماس تلفنی برقرار خواهیم کرد.',
+  receiptLabel: 'دانلود خلاصه دادخواست اولیه ثبت‌شده (رسید تصویری)',
+  powerOfAttorneyTitle: 'ثبت وکالت‌نامه در سامانه قضایی (ثنا)',
+  powerOfAttorneyDescription: 'جهت آغاز پیگیری قضایی، پس از تایید نهایی مدارک توسط کارشناسان، کد تأیید پیامکی (OTP) برای واگذاری وکالت به وکلای همکار Flysos.ir به شماره همراه شما ارسال خواهد شد که جهت فعال‌سازی باید آن را تلفنی به ما اعلام فرمایید.',
+  powerOfAttorneyLinkLabel: 'مشاهده و دانلود نمونه وکالت‌نامه رسمی ←',
+  powerOfAttorneyPendingLabel: 'نمونه وکالت‌نامه به‌زودی بارگذاری می‌شود',
+  guaranteeTitle: 'تعهد و تضمین Flysos.ir:',
+  guaranteeText: 'از این لحظه به بعد، تمامی فرآیندهای دادرسی و اداری کاملاً بر عهده Flysos.ir است. ما تا دریافت خسارت نهایی هیچ هزینه‌ای از شما دریافت نمی‌کنیم و در صورت موفقیت، غرامت پس از کسر کارمزد ۲۰ درصدی مستقیماً به حساب شبا اعلامی شما واریز خواهد شد.',
+  supportTitle: 'پشتیبانی تلفنی و شبکه‌های اجتماعی',
+  supportDescription: 'پاسخگویی سریع در خصوص وضعیت پرونده',
+  supportPhone: '02128421314',
+  supportHandle: '@flysos',
+  backHomeLabel: 'بازگشت به صفحه اصلی',
+  otherCasesLabel: 'مشاهده وضعیت سایر پرونده‌ها',
+  processingFinalText: 'در حال ثبت پرونده و استخراج اطلاعات بلیت هستیم',
+  processingNextText: 'در حال انتقال امن به مرحله بعد هستید',
+  processingDescription: 'برای جلوگیری از ثبت درخواست تکراری، تا پایان عملیات دسترسی صفحه موقتاً بسته شده است.',
+}, { background: '#ffffff', color: '#0f172a', padding: '40px 24px' })];
 
 const pageSeeds = {
   articles: [block('articles-page-main', 'blog-list', 0, {
@@ -145,6 +178,32 @@ const globalSeeds = {
 };
 
 function parseBlocks(value) { if (Array.isArray(value)) return value; try { return JSON.parse(value || '[]'); } catch { return []; } }
+
+async function ensureTrackPage(connection) {
+  const [rows] = await connection.query('SELECT `id`,`blocks`,`draftBlocks`,`publishedBlocks` FROM `CmsPage` WHERE `slug`=? LIMIT 1', ['track']);
+  const blocks = JSON.stringify(trackSuccessBlocks);
+  const seo = JSON.stringify({
+    metaTitle: 'ثبت و پیگیری پرونده | Flysos.ir',
+    metaDescription: 'ثبت و پیگیری پرونده حقوق مسافران هوایی در Flysos.ir',
+    canonical: 'https://flysos.ir/track',
+    robotsIndex: false,
+    robotsFollow: true,
+  });
+  if (rows[0]) {
+    const hasContent = [rows[0].draftBlocks, rows[0].publishedBlocks, rows[0].blocks].some((value) => parseBlocks(value).length > 0);
+    if (hasContent) return 'existing';
+    await connection.query(
+      'UPDATE `CmsPage` SET `status`=\'published\',`blocks`=?,`seo`=?,`draftBlocks`=?,`publishedBlocks`=?,`draftSeo`=?,`publishedSeo`=?,`publishedAt`=COALESCE(`publishedAt`,NOW(3)),`updatedAt`=NOW(3) WHERE `id`=?',
+      [blocks, seo, blocks, blocks, seo, seo, rows[0].id],
+    );
+    return 'migrated';
+  }
+  await connection.query(
+    `INSERT INTO \`CmsPage\` (\`id\`,\`title\`,\`slug\`,\`status\`,\`blocks\`,\`seo\`,\`draftBlocks\`,\`publishedBlocks\`,\`draftSeo\`,\`publishedSeo\`,\`publishedAt\`,\`pageType\`,\`category\`,\`tags\`,\`keywords\`,\`featuredImageUrl\`) VALUES (?,?,?,'published',?,?,?,?,?,?,NOW(3),'page','',?,?,'')`,
+    [randomUUID(), 'ثبت و پیگیری پرونده', 'track', blocks, seo, blocks, blocks, seo, seo, '[]', '[]'],
+  );
+  return 'created';
+}
 
 function composeHomeHero(blocks) {
   if (!Array.isArray(blocks) || blocks.some((item) => item?.id === 'home-hero-composition')) return blocks;
@@ -411,8 +470,12 @@ async function addBarmanaFooterSignature(connection) {
 
 export async function seedCmsPageContent(connection) {
   const homeResult = await seedPage(connection,'home',homeBlocks);
-  const results = { home:homeResult };
-  for (const [slug,blocks] of Object.entries(pageSeeds)) results[slug] = await seedPage(connection,slug,blocks);
+  const trackResult = await ensureTrackPage(connection);
+  const results = { home:homeResult, track:trackResult };
+  for (const [slug,blocks] of Object.entries(pageSeeds)) {
+    if (slug === 'track' && trackResult === 'created') continue;
+    results[slug] = await seedPage(connection,slug,blocks);
+  }
   results.homeHero = await repairHome(connection);
   results.publicFallbacks = await restoreBuiltInPageFallbacks(connection);
   results.editorDrafts = await refreshEditorDrafts(connection);

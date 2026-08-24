@@ -25,6 +25,15 @@ const typeLabels = {
   delay: 'تاخیر پرواز',
 };
 
+const referralSourceLabels = {
+  friends: 'معرفی دوستان و آشنایان',
+  sms: 'تبلیغات پیامکی',
+  social: 'شبکه‌های اجتماعی',
+  search: 'جست‌وجوگرها',
+  airport_ads: 'تبلیغات موجود در فرودگاه',
+  other: 'سایر',
+};
+
 export const publicStageTimeline = [
   {
     stage: 1,
@@ -129,6 +138,33 @@ function sortQuestionnaire(questionnaire) {
   );
 }
 
+function mapReferralSources(questionnaire) {
+  const sourceIds = new Set();
+
+  for (const answer of questionnaire || []) {
+    if (answer?.answer !== true) continue;
+
+    const questionId = String(answer.questionId || '');
+    if (!questionId.startsWith('referral_')) continue;
+
+    const sourceId = questionId.slice('referral_'.length);
+    if (referralSourceLabels[sourceId]) sourceIds.add(sourceId);
+  }
+
+  return [...sourceIds].map((id) => ({
+    id,
+    label: referralSourceLabels[id],
+  }));
+}
+
+function mapCaseQuestionnaire(questionnaire) {
+  return sortQuestionnaire(
+    (questionnaire || []).filter(
+      (answer) => !String(answer?.questionId || '').startsWith('referral_'),
+    ),
+  );
+}
+
 export function mapClaimForPublic(claim) {
   const stage = normalizeStage(claim.stage);
   const currentStage = publicStageTimeline.find((item) => item.stage === stage) || publicStageTimeline[0];
@@ -216,16 +252,18 @@ export function mapClaimForAdmin(claim) {
     ocrText: claim.flightInfo?.rawText || '',
     extractedTicketData,
 
+    referralSources: mapReferralSources(claim.questionnaire),
+
     files: (claim.files || []).map(mapFile),
 
     delayAnswers:
       claim.claimType === 'delay'
-        ? sortQuestionnaire(claim.questionnaire)
+        ? mapCaseQuestionnaire(claim.questionnaire)
         : [],
 
     cancellationAnswers:
       claim.claimType === 'cancellation'
-        ? sortQuestionnaire(claim.questionnaire)
+        ? mapCaseQuestionnaire(claim.questionnaire)
         : [],
 
     statusHistory: claim.statusHistory || [],

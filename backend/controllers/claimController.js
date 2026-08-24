@@ -7,6 +7,7 @@ import { AppError } from '../utils/AppError.js';
 import {
   fileTypeSchema,
   questionnaireSchema,
+  referralSourceQuestionIds,
   startClaimSchema,
   submitClaimSchema,
   trackClaimSchema,
@@ -401,6 +402,20 @@ export async function saveQuestionnaire(req, res) {
 
   const claim = claims[0];
 
+  const hasInvalidReferralSource = body.answers.some(
+    (answer) =>
+      String(answer.questionId).startsWith('referral_') &&
+      !referralSourceQuestionIds.includes(answer.questionId),
+  );
+
+  if (hasInvalidReferralSource) {
+    throw new AppError(
+      'گزینه نحوه آشنایی با ما معتبر نیست.',
+      400,
+      'INVALID_REFERRAL_SOURCE',
+    );
+  }
+
   await transaction(async (tx) => {
     // Delete existing questionnaire answers
     await tx.query('DELETE FROM QuestionnaireAnswer WHERE claimId = ?', [claim.id]);
@@ -431,6 +446,23 @@ export async function submitClaim(req, res) {
   }
 
   const claim = claims[0];
+
+  const referralAnswers = await query(
+    `SELECT id FROM QuestionnaireAnswer
+     WHERE claimId = ?
+       AND answer = 1
+       AND questionId IN (${referralSourceQuestionIds.map(() => '?').join(', ')})
+     LIMIT 1`,
+    [claim.id, ...referralSourceQuestionIds],
+  );
+
+  if (!referralAnswers.length) {
+    throw new AppError(
+      'لطفاً حداقل یک گزینه از نحوه آشنایی با ما را انتخاب کنید.',
+      400,
+      'REFERRAL_SOURCE_REQUIRED',
+    );
+  }
 
   await transaction(async (tx) => {
     const newClaimType = body.claimType || claim.claimType;

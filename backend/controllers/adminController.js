@@ -27,6 +27,11 @@ import {
   updateClaimSchema,
   updateClaimStatusSchema,
 } from '../validation/adminSchemas.js';
+import {
+  ensureAdminAccessLevelsColumn,
+  getAdminAccessLevels,
+  parseAdminAccessLevels,
+} from '../services/adminPermissionService.js';
 
 const claimStageLabels = {
   1: 'بررسی اولیه',
@@ -37,6 +42,17 @@ const claimStageLabels = {
   6: 'وصول خسارت',
   7: 'تسویه با مسافر',
 };
+
+async function sendClaimStageSms(claim, stageLabel) {
+  return sendAutomaticSms(
+    claim.phoneNumber || claim.customer?.phoneNumber,
+    await getSmsTemplate('statusUpdate', {
+      trackingCode: claim.trackingCode,
+      status: stageLabel,
+      stage: stageLabel,
+    })
+  );
+}
 
 function parseOrThrow(schema, value) {
   const result = schema.safeParse(value);
@@ -139,7 +155,8 @@ function canAccessClaim(admin, claim) {
   if (!admin || !claim) return false;
   if (isSupervisor(admin)) return true;
   if (claim.assignedAdminId && claim.assignedAdminId === admin.id) return true;
-  return claim.status === admin.accessLevel;
+  const accessLevels = getAdminAccessLevels(admin);
+  return accessLevels.includes('all') || accessLevels.includes(claim.status);
 }
 
 function assertCanAccessClaim(admin, claim) {
@@ -167,13 +184,22 @@ export async function login(req, res) {
     throw new AppError('JWT_SECRET key is not configured in the environment.', 500, 'JWT_CONFIG_ERROR');
   }
 
+  await ensureAdminAccessLevelsColumn();
+  const accessRows = await query(
+    'SELECT accessLevels FROM AdminUser WHERE id = ? LIMIT 1',
+    [admin.id]
+  );
+  const accessLevels = parseAdminAccessLevels(accessRows[0]?.accessLevels, admin.accessLevel);
+  const accessLevel = accessLevels.includes('all') ? 'all' : accessLevels[0];
+
   const token = jwt.sign(
     {
       id: admin.id,
       username: admin.username,
       name: admin.name || admin.username,
       role: admin.role,
-      accessLevel: admin.accessLevel,
+      accessLevel,
+      accessLevels,
     },
     env.jwtSecret,
     { expiresIn: '8h' }
@@ -185,7 +211,8 @@ export async function login(req, res) {
       username: admin.username,
       name: admin.name || admin.username,
       role: admin.role,
-      accessLevel: admin.accessLevel,
+      accessLevel,
+      accessLevels,
     },
     token,
   });
@@ -198,10 +225,16 @@ export async function listClaims(req, res) {
   if (isSupervisor(admin)) {
     claims = await query('SELECT id FROM Claim ORDER BY createdAt DESC');
   } else {
-    claims = await query(
-      'SELECT id FROM Claim WHERE status = ? OR assignedAdminId = ? ORDER BY createdAt DESC',
-      [admin.accessLevel, admin.id]
-    );
+    const accessLevels = getAdminAccessLevels(admin);
+    if (accessLevels.includes('all')) {
+      claims = await query('SELECT id FROM Claim ORDER BY createdAt DESC');
+    } else {
+      const placeholders = accessLevels.map(() => '?').join(', ');
+      claims = await query(
+        `SELECT id FROM Claim WHERE status IN (${placeholders}) OR assignedAdminId = ? ORDER BY createdAt DESC`,
+        [...accessLevels, admin.id]
+      );
+    }
   }
 
   const loadedClaims = (await Promise.all(
@@ -400,16 +433,10 @@ export async function updateClaim(req, res) {
     return loadFullClaim(claim.id, tx);
   });
 
-  if (body.stage && body.stage !== claim.stage) {
+  const stageChanged = body.stage !== undefined && Number(body.stage) !== Number(claim.stage);
+  if (stageChanged) {
     const progressLabel = claimStageLabels[body.stage] || body.stage;
-    await sendAutomaticSms(
-      updatedClaim.phoneNumber,
-      await getSmsTemplate('statusUpdate', {
-        trackingCode: updatedClaim.trackingCode,
-        status: progressLabel,
-        stage: progressLabel,
-      })
-    );
+    await sendClaimStageSms(updatedClaim, progressLabel);
   }
 
   res.json(mapClaimForAdmin(updatedClaim));

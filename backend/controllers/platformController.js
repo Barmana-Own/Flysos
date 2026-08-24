@@ -20,6 +20,11 @@ import {
   getStoredSmsTemplates,
   normalizeSmsTemplates,
 } from '../services/smsTemplateService.js';
+import {
+  ensureAdminAccessLevelsColumn,
+  getAdminAccessLevels,
+  parseAdminAccessLevels,
+} from '../services/adminPermissionService.js';
 
 const roleLabels = {
   supervisor: 'مدیر ارشد',
@@ -38,6 +43,14 @@ const accessLabels = {
   needs_action: 'نیاز به اقدام',
   pending_info: 'در انتظار اطلاعات',
   approved: 'تأیید شده',
+  waiting_poa_draft: 'منتظر تنظیم وکالت‌نامه',
+  waiting_passenger_poa_approval: 'منتظر تأیید وکالت از سمت مسافر',
+  lawyer_action: 'در دست اقدام وکیل',
+  waiting_judgment: 'منتظر صدور رأی',
+  waiting_enforcement_order: 'منتظر صدور اجرائیه',
+  waiting_compensation: 'منتظر دریافت خسارت',
+  finance_review: 'در دست بررسی مالی',
+  waiting_customer_payment: 'منتظر پرداخت به حساب مشتری',
   rejected: 'رد شده',
   closed: 'بسته شده',
 };
@@ -67,6 +80,12 @@ function formatPersianDate(value) {
 }
 
 function mapAdmin(admin) {
+  const accessLevels = getAdminAccessLevels(admin);
+  const accessLevel = accessLevels.includes('all') ? 'all' : accessLevels[0];
+  const accessLevelsLabel = accessLevels
+    .map((level) => accessLabels[level] || level)
+    .join('، ');
+
   return {
     id: admin.id,
     name: admin.name || admin.username,
@@ -77,14 +96,15 @@ function mapAdmin(admin) {
     role: admin.role,
     roleLabel: roleLabels[admin.role] || admin.role,
     status: admin.status,
-    accessLevel: admin.accessLevel,
-    accessLevelLabel:
-      accessLabels[admin.accessLevel] || admin.accessLevel,
+    accessLevel,
+    accessLevels,
+    accessLevelLabel: accessLevelsLabel,
+    accessLevelsLabel,
     createdAt: admin.createdAt,
   };
 }
 
-function mapCustomer(customer) {
+function mapCustomer(customer, claims = []) {
   const name = customer.name || customer.nationalId;
   const parts = name.split(' ').filter(Boolean);
 
@@ -96,6 +116,12 @@ function mapCustomer(customer) {
     nationalId: customer.nationalId,
     email: customer.email || '',
     phone: customer.phoneNumber || '',
+    claimCode: customer.claimCode || '',
+    claims: claims.map((claim) => ({
+      id: claim.id,
+      trackingCode: claim.trackingCode || '',
+      status: claim.status || '',
+    })),
     birthDate: customer.birthDate || '',
     notes: customer.notes || '',
     claimsCount: customer.claimsCount || 0,
@@ -232,9 +258,14 @@ async function loadFullClaim(claimId, tx = null) {
 }
 
 export async function dashboard(req, res) {
-  const canSeeAllClaims = ['supervisor', 'passenger_admin'].includes(req.admin?.role);
-  const claimWhere = canSeeAllClaims ? '' : 'WHERE status = ? OR assignedAdminId = ?';
-  const claimParams = canSeeAllClaims ? [] : [req.admin.accessLevel, req.admin.id];
+  const accessLevels = getAdminAccessLevels(req.admin);
+  const canSeeAllClaims = ['supervisor', 'passenger_admin'].includes(req.admin?.role)
+    || accessLevels.includes('all');
+  const statusPlaceholders = accessLevels.map(() => '?').join(', ');
+  const claimWhere = canSeeAllClaims
+    ? ''
+    : `WHERE status IN (${statusPlaceholders}) OR assignedAdminId = ?`;
+  const claimParams = canSeeAllClaims ? [] : [...accessLevels, req.admin.id];
 
   const [
     totalRes,
@@ -278,13 +309,26 @@ export async function dashboard(req, res) {
 export async function listUsers(_req, res) {
   await ensureCustomerProfileColumns();
   const customers = await query(
-    'SELECT c.*, (SELECT COUNT(*) FROM Claim WHERE customerId = c.id) as claimsCount FROM Customer c ORDER BY c.createdAt DESC'
+    'SELECT c.*, (SELECT COUNT(*) FROM Claim WHERE customerId = c.id) as claimsCount, (SELECT trackingCode FROM Claim WHERE customerId = c.id ORDER BY createdAt DESC LIMIT 1) as claimCode FROM Customer c ORDER BY c.createdAt DESC'
   );
+  const customerIds = customers.map((customer) => customer.id).filter(Boolean);
+  const claims = customerIds.length
+    ? await query(
+      `SELECT id, customerId, trackingCode, status, createdAt FROM Claim WHERE customerId IN (${customerIds.map(() => '?').join(',')}) ORDER BY createdAt DESC`,
+      customerIds
+    )
+    : [];
+  const claimsByCustomer = new Map();
+  for (const claim of claims) {
+    const customerClaims = claimsByCustomer.get(claim.customerId) || [];
+    customerClaims.push(claim);
+    claimsByCustomer.set(claim.customerId, customerClaims);
+  }
 
   const mappedCustomers = customers.map(cust => {
     cust.createdAt = cust.createdAt ? new Date(cust.createdAt) : new Date();
     cust.updatedAt = cust.updatedAt ? new Date(cust.updatedAt) : new Date();
-    return mapCustomer(cust);
+    return mapCustomer(cust, claimsByCustomer.get(cust.id) || []);
   });
 
   res.json(mappedCustomers);
@@ -355,6 +399,7 @@ export async function updateUser(req, res) {
 }
 
 export async function listExperts(_req, res) {
+  await ensureAdminAccessLevelsColumn();
   const admins = await query('SELECT * FROM AdminUser ORDER BY createdAt DESC');
 
   const mappedAdmins = admins.map(adm => {
@@ -368,6 +413,9 @@ export async function listExperts(_req, res) {
 
 export async function createExpert(req, res) {
   const body = parseOrThrow(createExpertSchema, req.body);
+  await ensureAdminAccessLevelsColumn();
+  const accessLevels = parseAdminAccessLevels(body.accessLevels, body.accessLevel);
+  const accessLevel = accessLevels.includes('all') ? 'all' : accessLevels[0];
 
   const exists = await query(
     'SELECT id FROM AdminUser WHERE username = ? OR (email IS NOT NULL AND email = ?) LIMIT 1',
@@ -382,7 +430,7 @@ export async function createExpert(req, res) {
   const passwordHash = await bcrypt.hash(body.password, 12);
 
   await query(
-    'INSERT INTO AdminUser (id, username, passwordHash, name, email, phone, role, status, accessLevel, photoUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO AdminUser (id, username, passwordHash, name, email, phone, role, status, accessLevel, accessLevels, photoUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [
       adminId,
       body.username,
@@ -392,7 +440,8 @@ export async function createExpert(req, res) {
       body.phone || null,
       body.role,
       body.status,
-      body.accessLevel,
+      accessLevel,
+      JSON.stringify(accessLevels),
       body.photoUrl || null,
     ]
   );
@@ -406,6 +455,7 @@ export async function createExpert(req, res) {
 
 export async function updateExpert(req, res) {
   const body = parseOrThrow(updateExpertSchema, req.body);
+  await ensureAdminAccessLevelsColumn();
   const existingList = await query('SELECT * FROM AdminUser WHERE id = ? LIMIT 1', [req.params.id]);
 
   if (!existingList.length) {
@@ -451,9 +501,15 @@ export async function updateExpert(req, res) {
     updateFields.push('status = ?');
     updateParams.push(body.status);
   }
-  if (body.accessLevel !== undefined) {
+  if (body.accessLevel !== undefined || body.accessLevels !== undefined) {
+    const accessLevels = parseAdminAccessLevels(
+      body.accessLevels,
+      body.accessLevel || existing.accessLevel
+    );
     updateFields.push('accessLevel = ?');
-    updateParams.push(body.accessLevel);
+    updateParams.push(accessLevels.includes('all') ? 'all' : accessLevels[0]);
+    updateFields.push('accessLevels = ?');
+    updateParams.push(JSON.stringify(accessLevels));
   }
   if (body.photoUrl !== undefined) {
     updateFields.push('photoUrl = ?');

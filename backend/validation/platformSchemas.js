@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { claimStatusSchema } from './claimSchemas.js';
 
 export const sendDirectSmsSchema = z.object({
   message: z.string().trim().min(1).max(1000),
@@ -37,16 +38,7 @@ const adminRoleSchema = z.enum([
   'expert_intl',
 ]);
 const adminStatusSchema = z.enum(['active', 'inactive']);
-const accessLevelSchema = z.enum([
-  'all',
-  'new',
-  'under_review',
-  'needs_action',
-  'pending_info',
-  'approved',
-  'rejected',
-  'closed',
-]);
+const accessLevelSchema = z.union([z.literal('all'), claimStatusSchema]);
 
 export const updateCustomerSchema = z
   .object({
@@ -69,6 +61,7 @@ const expertBaseSchema = z.object({
   role: adminRoleSchema,
   status: adminStatusSchema,
   accessLevel: accessLevelSchema,
+  accessLevels: z.array(accessLevelSchema).min(1).max(16).optional(),
   photoUrl: z.string().trim().max(2_000_000).nullable().optional(),
 });
 

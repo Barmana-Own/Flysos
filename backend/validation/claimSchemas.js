@@ -5,6 +5,15 @@ export const claimTypeSchema = z.enum([
   'cancellation',
 ]);
 
+export const referralSourceQuestionIds = Object.freeze([
+  'referral_friends',
+  'referral_sms',
+  'referral_social',
+  'referral_search',
+  'referral_airport_ads',
+  'referral_other',
+]);
+
 export const claimStatusSchema = z.enum([
   'new',
   'under_review',
