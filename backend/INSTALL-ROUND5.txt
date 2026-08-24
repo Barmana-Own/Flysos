@@ -1,0 +1,23 @@
+FlySOS Round 5 - نصب بک‌اند
+===============================
+فایل بک‌اند را در /home/flysosir آپلود کنید و اجرا کنید:
+
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+unzip -o /home/flysosir/flysos-backend-2026-07-20-round5-cms-support-seo.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+npm run db:cms
+npm run sitemap
+mkdir -p tmp uploads
+touch tmp/restart.txt
+
+سپس در cPanel > Setup Node.js App روی Restart کلیک کنید.
+
+تست‌ها:
+curl -sS https://flysos.ir/api/health
+curl -sS https://flysos.ir/api/settings/public
+curl -sS https://flysos.ir/api/articles
+
+تست تشخیصی پرواز از پنل مدیریت انجام می‌شود. اگر نتیجه Connect Timeout باشد، مشکل شبکه خروجی هاست یا whitelist سرویس مقصد است، نه کد.

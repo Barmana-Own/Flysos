@@ -1,0 +1,31 @@
+به‌روزرسانی محتوای صفحه‌ساز FlySOS
+==================================
+
+فایل ZIP بک‌اند را در /home/flysosir آپلود کنید و سپس:
+
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+unzip -o /home/flysosir/flysos-backend-2026-07-20-builder-content-sync.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+npm run db:cms
+mkdir -p tmp
+touch tmp/restart.txt
+
+سپس در cPanel > Setup Node.js App روی Restart کلیک کنید.
+
+مهاجرت جدید فقط یک بار اجرا می‌شود و محتوای پیش‌فرض زیر را با نسخه فعلی هماهنگ می‌کند:
+- صفحه اصلی
+- سوالات متداول
+- درباره ما
+- حقوق مسافر
+- قوانین
+- مقالات
+- خدمات
+- تماس با ما
+- حریم خصوصی
+- هدر سراسری
+- فوتر سراسری
+
+پس از این همگام‌سازی، ویرایش‌های بعدی مدیر از صفحه‌ساز با اجرای دوباره migration بازنویسی نمی‌شوند.

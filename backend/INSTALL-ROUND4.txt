@@ -1,0 +1,12 @@
+FlySOS Round 4 — نصب بک‌اند
+
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+unzip -o /home/flysosir/flysos-backend-2026-07-20-round4-admin-workflow.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+mkdir -p tmp
+touch tmp/restart.txt
+
+سپس در Setup Node.js App روی Restart کلیک کنید. مهاجرت دیتابیس جدیدی لازم نیست.

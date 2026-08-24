@@ -1,0 +1,30 @@
+Flysos — Brand + Page Builder Safe Update 2026-07-22
+=======================================================
+
+این نسخه فقط موارد زیر را تغییر می‌دهد:
+- تمام شکل‌های قدیمی نام برند در محتوای سایت به Flysos تبدیل می‌شود.
+- ذخیره پیش‌نویس دیگر صفحه را خودکار منتشر نمی‌کند؛ انتشار فقط با دکمه «انتشار» انجام می‌شود.
+- صفحه‌ساز دارای جستجوی بلوک، جمع‌کردن پنل راست و میانبر Ctrl+S می‌شود.
+- ساختار صفحات، ترتیب و تو‌در‌تویی بلوک‌ها، استایل‌ها و فونت فعلی تغییر نمی‌کند.
+- اصلاحات Import پرواز و پاسخ 202 نسخه فعلی بک‌اند حفظ شده است.
+
+BACKEND
+-------
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+unzip -o /home/flysosir/flysos-backend-2026-07-22-brand-builder-safe.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+npm run db:brand-builder
+mkdir -p tmp
+touch tmp/restart.txt
+
+سپس در cPanel > Setup Node.js App یک بار Restart بزنید.
+
+FRONTEND
+--------
+cd /home/flysosir/public_html
+unzip -o /home/flysosir/flysos-frontend-2026-07-22-brand-builder-safe.zip
+
+در پایان کش مرورگر/CDN را پاک کنید یا صفحه را با Ctrl+F5 باز کنید.

@@ -1,0 +1,22 @@
+نصب بک‌اند اصلاحات مرحله دوم FlySOS
+===================================
+
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+unzip -o /home/flysosir/flysos-backend-2026-07-20-round2-final.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+npm run db:cms
+mkdir -p tmp
+touch tmp/restart.txt
+
+سپس در cPanel > Setup Node.js App روی Restart کلیک کنید.
+
+خروجی مهاجرت باید شامل این پیام باشد:
+Round 2 FAQ/support migration completed successfully.
+
+تست‌ها:
+curl -sS https://flysos.ir/api/health
+curl -sS https://flysos.ir/api/faqs
+curl -sS https://flysos.ir/api/flights/status?limit=3

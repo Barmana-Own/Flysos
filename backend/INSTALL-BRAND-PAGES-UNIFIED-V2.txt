@@ -1,0 +1,14 @@
+Upload the backend ZIP to /home/flysosir, then:
+
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+tar -czf /home/flysosir/backend-before-brand-pages-v2-$(date +%Y-%m-%d-%H%M).tar.gz --exclude=node_modules --exclude=uploads --exclude=.env .
+unzip -o /home/flysosir/flysos-backend-2026-07-22-brand-pages-unified-v2.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+npm run db:brand-pages
+mkdir -p tmp
+touch tmp/restart.txt
+
+Then restart the application in cPanel > Setup Node.js App.

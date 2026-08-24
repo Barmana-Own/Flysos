@@ -1,0 +1,80 @@
+FlySOS — Employer Revision Checklist (PDF: 47 pages)
+=====================================================
+
+PUBLIC SITE / SEO
+[Done] Header text changed to «ثبت/پیگیری پرونده».
+[Done] Articles tab, category/search/list/detail pages and SEO-friendly URLs.
+[Done] Browser history and Back button work because pages use real routes.
+[Done] Brand starts with capital F; Flysos / Flysos replaces «Flysos».
+[Done] Local airport/passenger hero image; no Unsplash dependency.
+[Done] No Google Fonts or Google static font dependency; CSS uses Vazirmatn/Vazir/system fallback.
+[Done] SEO title, description, canonical route handling, robots.txt and sitemap.xml.
+[Done] SPA rewrite snippet supplied without overwriting existing cPanel .htaccess.
+[Done] Compact footer, local social links/settings, phone 02128421314, @flysos and eNamad.
+[Done] Footer and CMS global layouts are stored/published through backend.
+
+HOME / CLAIM REGISTRATION
+[Done] Legal cost explanation: all pursuit/legal/court costs paid by Flysos; 20% only after success.
+[Done] Exact 20% consent wording and blue Terms/Conditions links.
+[Done] National ID required; tracking code + national ID required for tracking.
+[Done] Persian birth-date input/date picker repaired.
+[Done] Better form typography and compact section spacing.
+[Done] Claim type selector visually prominent before questionnaire.
+[Done] Ticket required; boarding pass optional and shown only for delay claims.
+[Done] Upload labels corrected; obsolete explanatory number removed.
+[Done] Double-submit protection, busy overlay and request deduplication.
+[Done] OCR runs asynchronously after final registration/tracking-code response.
+[Done] Receipt/contact/social details corrected.
+
+HOME CONTENT / FLIGHTS
+[Done] Reason cards and compensation cards centered with reduced whitespace.
+[Done] Approximate compensation labels: 2–5 hours 20%, over 5 hours 40%, cancellation minimum 50%.
+[Done] Process wording updated to the employer-provided legal workflow.
+[Done] Flight table includes origin, destination, flight number, airline, scheduled time and status.
+[Done] Full-flight link and backend external-feed/cache endpoints.
+[Configuration] External flight display needs working outbound TCP/whitelist and valid .env credentials.
+
+QUESTIONNAIRE
+[Done] Separate delay/cancellation selectors and 12 questions per type.
+[Done] Conditional dependencies implemented: 1→2; 2→3/4; 5→6/7; 7→8; 10→11/12.
+[Done] Persian spelling/text corrections.
+[Done] Questionnaire ordering is stored and returned by sortOrder in passenger/admin panels.
+
+FAQ / CONTENT
+[Done] FAQ categories, public API and management API.
+[Done] User inquiry form requires email or phone and stores it for admin follow-up.
+[Done] Supplementary admin tool for FAQ create/edit/delete and inquiry status.
+[Done] Employer-provided FAQ answers, brand, fee and 1–3 month wording seeded.
+[Done] Article CMS: text, images/PDF media, featured image, category, tags, keywords, draft/publish/versioning.
+[Done] Two initial SEO articles seeded.
+
+ADMIN / CLAIMS
+[Done] Saved passenger/flight/bank data are reloaded from API after update.
+[Done] Ticket issue date, destination, route and scheduled time editable/displayed.
+[Done] Expanded statuses: POA preparation/approval, lawyer action, verdict, enforcement, compensation, finance, customer payment.
+[Done] Public timeline reordered and includes lawsuit/petition stage before judicial handling.
+[Done] Admin document titles include related question; Persian upload filename normalization.
+[Done] Admin can replace uploaded files; ticket OCR can be rerun.
+[Done] Notes support attachment; saved notes/messages reload into history.
+[Done] Print stylesheet prints the complete claim area.
+[Done] Message template selection fills editable text first; messages are stored in MessageLog.
+[Done] Assigned-expert statistics are scoped to assigned claims for non-supervisors.
+
+ROLES / ACCESS
+[Done] Main admin, content admin, passenger admin, senior expert and expert roles seeded.
+[Done] Per-permission backend middleware for claims, users, roles, settings, FAQ, CMS, reports and flight sync.
+[Done] Supplementary admin role/permission editor.
+
+SETTINGS / INTEGRATIONS
+[Done] Settings fields for phone, email, social links, Goftino widget ID, rights document URL, POA URL and custom head code.
+[Needs credentials/account] Real SMS, Bale, Telegram, email delivery and Goftino chat require provider credentials/widget ID.
+[Needs cPanel action] Organizational email accounts must be created in cPanel Email Accounts.
+[Needs supplied files] Rights passenger and power-of-attorney PDFs can be uploaded in CMS Media, then their URLs entered in Settings.
+
+QUALITY CHECKS
+[Done] Main frontend/runtime/admin scripts pass Node syntax checks.
+[Done] All backend JavaScript files pass Node syntax checks.
+[Done] No setVazirmatnval corruption.
+[Done] No Unsplash or Google Fonts dependency in final frontend.
+[Done] ZIP archives are tested after creation.
+[Not live-tested] MySQL migration, production Node Passenger restart and third-party providers require the hosting environment and credentials.

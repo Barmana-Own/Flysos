@@ -1,0 +1,29 @@
+FlySOS Backend — Employer Revision 2026-07-20
+================================================
+
+Upload ZIP to:
+/home/flysosir/flysos-backend-2026-07-20-employer-revision-final.zip
+
+Install/update:
+source /home/flysosir/nodevenv/public_html/backend/22/bin/activate
+cp /home/flysosir/public_html/backend/.env /home/flysosir/backend.env.backup
+cd /home/flysosir/public_html/backend
+unzip -o /home/flysosir/flysos-backend-2026-07-20-employer-revision-final.zip
+cp /home/flysosir/backend.env.backup .env
+npm install --omit=dev
+npm run db:cms
+mkdir -p tmp uploads
+touch tmp/restart.txt
+
+Then use cPanel > Setup Node.js App > Restart.
+
+Verify:
+curl -sS https://flysos.ir/api/health
+curl -sS https://flysos.ir/api/faqs
+curl -sS https://flysos.ir/api/articles
+curl -sS "https://flysos.ir/api/flights/status?limit=3"
+
+Notes:
+- Existing .env is preserved by the commands above.
+- Fill EXTERNAL_FLIGHTS_* values in .env for the external flight feed.
+- Third-party SMS/chat/social providers require their own credentials.

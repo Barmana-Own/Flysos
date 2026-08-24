@@ -1,0 +1,39 @@
+Create this file manually as: E:\flsyoy\backend\.env
+
+NODE_ENV=development
+PORT=5050
+CORS_ORIGIN=http://localhost:5036
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=flysos_direct
+DB_USER=flysos_app
+DB_PASSWORD=FlySOS_local_123!
+
+JWT_SECRET=local_test_secret_change_later_very_long_123456789
+UPLOAD_DIR=uploads
+
+# Pishgam Rayan SMS API (keep the token only on the backend server)
+SMS_API_BASE_URL=https://smsapi.pishgamrayan.com
+SMS_API_TOKEN=PUT_YOUR_PRIVATE_TOKEN_HERE
+SMS_SENDER_NUMBER=PUT_YOUR_APPROVED_SENDER_NUMBER_HERE
+SMS_TIMEOUT_MS=10000
+
+EXTERNAL_FLIGHTS_BASE_URL=http://109.122.250.170:3000/api/flights
+EXTERNAL_FLIGHTS_USERNAME=airlineinformations
+EXTERNAL_FLIGHTS_PASSWORD=112233444
+EXTERNAL_FLIGHTS_LIMIT=500
+
+# Optional: external flight feeds cached into MySQL every 10 minutes.
+# Leave these empty when EXTERNAL_FLIGHTS_BASE_URL is set; backend automatically derives:
+# /flights, /flights/cancelled-last-24h, /flights/delayed-last-24h and stores /flights/count separately.
+EXTERNAL_FLIGHT_FEED_URL_1=
+EXTERNAL_FLIGHT_FEED_NAME_1=mehrabad
+EXTERNAL_FLIGHT_FEED_URL_2=
+EXTERNAL_FLIGHT_FEED_NAME_2=imam_khomeini
+EXTERNAL_FLIGHT_FEED_URL_3=
+EXTERNAL_FLIGHT_FEED_NAME_3=delayed
+EXTERNAL_FLIGHT_FEED_URL_4=
+EXTERNAL_FLIGHT_FEED_NAME_4=cancelled
+FLIGHT_CACHE_ENABLED=true
+FLIGHT_CACHE_INTERVAL_MS=600000

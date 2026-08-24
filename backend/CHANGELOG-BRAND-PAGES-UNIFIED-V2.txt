@@ -1,0 +1,9 @@
+Flysos backend — Brand and public pages V2 (2026-07-22)
+========================================================
+
+- Adds npm run db:brand-pages
+- Scans all textual database columns safely and normalizes visible brand text to Flysos
+- Covers CMS pages, versions, global header/footer layouts, settings and legacy content
+- Does not change lowercase domain URLs or email addresses
+- Updates future CMS seed content so Persian/FlySOS/Flysos.ir branding is not reintroduced
+- Preserves flight import, database schema, authentication and all existing APIs
