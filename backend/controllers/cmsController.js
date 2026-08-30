@@ -5,6 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { query, transaction } from '../config/db.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
+import {
+  hasPdfSignature,
+  isPdfUploadMetadata,
+  isSupportedUploadMetadata,
+  normalizeStoredMimeType,
+} from '../utils/fileValidation.js';
 
 const MAX_BLOCKS = 250;
 const MAX_DEPTH = 6;
@@ -26,6 +32,47 @@ const STYLE_KEYS = new Set([
   'backgroundPosition', 'backgroundSize', 'position', 'overflow',
 ]);
 const URL_KEYS = new Set(['url', 'image', 'src', 'href', 'link', 'primaryUrl', 'secondaryUrl', 'canonical', 'openGraphImage']);
+
+function resolveStoredUploadPath(filename) {
+  const uploadRoot = path.resolve(process.cwd(), env.uploadDir);
+  const candidate = path.resolve(uploadRoot, String(filename || ''));
+  const relative = path.relative(uploadRoot, candidate);
+
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return candidate;
+}
+
+function toPublicUploadUrl(filename) {
+  const relative = String(filename || '')
+    .split(/[\\/]+/u)
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+
+  return `/uploads/${relative}`;
+}
+
+async function hasPdfFileSignature(filePath) {
+  let handle;
+  try {
+    handle = await fs.open(filePath, 'r');
+    const buffer = Buffer.alloc(5);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return hasPdfSignature(buffer.subarray(0, bytesRead));
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+async function validateUploadedCmsFile(file) {
+  if (!isSupportedUploadMetadata(file)) {
+    throw new AppError('Only image and PDF uploads are supported.', 415, 'UNSUPPORTED_FILE_TYPE');
+  }
+
+  if (isPdfUploadMetadata(file) && !(await hasPdfFileSignature(file.path))) {
+    throw new AppError('The uploaded PDF is invalid.', 415, 'INVALID_FILE_CONTENT');
+  }
+}
 
 function parseJson(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -398,17 +445,29 @@ export async function listCmsMedia(req, res) {
 
 export async function uploadCmsMedia(req, res) {
   if (!req.file) throw new AppError('A media file is required.', 400, 'FILE_REQUIRED');
-  if (!req.file.mimetype.startsWith('image/') && req.file.mimetype !== 'application/pdf') {
-    throw new AppError('Only image and PDF uploads are supported.', 415, 'UNSUPPORTED_FILE_TYPE');
+  let persisted = false;
+
+  try {
+    await validateUploadedCmsFile(req.file);
+
+    const id = randomUUID();
+    const uploadRoot = path.resolve(process.cwd(), env.uploadDir);
+    const filename = path.relative(uploadRoot, req.file.path).split(path.sep).join('/');
+    const url = toPublicUploadUrl(filename);
+    const mimetype = normalizeStoredMimeType(req.file);
+
+    await query(
+      'INSERT INTO `CmsMedia` (`id`,`filename`,`originalName`,`mimetype`,`size`,`url`,`category`,`altText`,`title`,`description`,`uploadedByAdminId`) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      [id, filename, req.file.originalname, mimetype, req.file.size, url, cleanText(req.body?.category, 'category', 100), cleanText(req.body?.altText, 'altText', 300), cleanText(req.body?.title || req.file.originalname, 'title', 191), cleanText(req.body?.description, 'description', 2000), req.admin.id]
+    );
+    persisted = true;
+
+    const rows = await query('SELECT * FROM `CmsMedia` WHERE `id`=?', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    if (!persisted && req.file.path) await fs.unlink(req.file.path).catch(() => undefined);
+    throw error;
   }
-  const id = randomUUID();
-  const url = `/uploads/${encodeURIComponent(req.file.filename)}`;
-  await query(
-    'INSERT INTO `CmsMedia` (`id`,`filename`,`originalName`,`mimetype`,`size`,`url`,`category`,`altText`,`title`,`description`,`uploadedByAdminId`) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-    [id, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, url, cleanText(req.body?.category, 'category', 100), cleanText(req.body?.altText, 'altText', 300), cleanText(req.body?.title || req.file.originalname, 'title', 191), cleanText(req.body?.description, 'description', 2000), req.admin.id]
-  );
-  const rows = await query('SELECT * FROM `CmsMedia` WHERE `id`=?', [id]);
-  res.status(201).json(rows[0]);
 }
 
 export async function updateCmsMedia(req, res) {
@@ -426,6 +485,35 @@ export async function deleteCmsMedia(req, res) {
   const rows = await query('SELECT * FROM `CmsMedia` WHERE `id`=? LIMIT 1', [req.params.id]);
   if (!rows[0]) throw new AppError('Media not found.', 404, 'MEDIA_NOT_FOUND');
   await query('DELETE FROM `CmsMedia` WHERE `id`=?', [req.params.id]);
-  await fs.unlink(path.resolve(process.cwd(), env.uploadDir, rows[0].filename)).catch(() => undefined);
+  const filePath = resolveStoredUploadPath(rows[0].filename);
+  if (filePath) await fs.unlink(filePath).catch(() => undefined);
   res.status(204).end();
+}
+
+export async function serveLegacyCmsMedia(req, res, next) {
+  const filename = String(req.params.filename || '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,190}$/u.test(filename)) {
+    throw new AppError('Media not found.', 404, 'MEDIA_NOT_FOUND');
+  }
+
+  const rows = await query(
+    'SELECT `filename`,`mimetype` FROM `CmsMedia` WHERE `filename`=? LIMIT 1',
+    [filename]
+  );
+  const media = rows[0];
+  if (!media) throw new AppError('Media not found.', 404, 'MEDIA_NOT_FOUND');
+
+  const filePath = resolveStoredUploadPath(media.filename);
+  if (!filePath) throw new AppError('Media not found.', 404, 'MEDIA_NOT_FOUND');
+
+  try {
+    await fs.access(filePath);
+  } catch {
+    throw new AppError('Media not found.', 404, 'MEDIA_NOT_FOUND');
+  }
+
+  res.set('Content-Type', media.mimetype || 'application/octet-stream');
+  res.sendFile(filePath, { dotfiles: 'deny' }, (error) => {
+    if (error && !res.headersSent) next(error);
+  });
 }

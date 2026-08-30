@@ -32,6 +32,10 @@ export function errorHandler(error, req, res, _next) {
     statusCode = 400;
     code = 'INVALID_UPLOAD';
     message = 'A maximum of 4 files can be uploaded.';
+  } else if (error?.type === 'entity.too.large' || error?.status === 413) {
+    statusCode = 413;
+    code = 'PAYLOAD_TOO_LARGE';
+    message = 'Request body is too large.';
   } else if (env.nodeEnv !== 'production') {
     message = error?.message || message;
   }

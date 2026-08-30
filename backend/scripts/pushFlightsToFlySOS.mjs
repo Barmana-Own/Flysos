@@ -37,6 +37,9 @@ const providerCount = Number(
   typeof countPayload === 'number' ? countPayload
     : countPayload?.count ?? countPayload?.total ?? countPayload?.data?.count ?? countPayload?.data?.total
 );
+const normalizedProviderCount = Number.isSafeInteger(providerCount) && providerCount >= 0 && providerCount <= 2_147_483_647
+  ? providerCount
+  : null;
 
 const response = await fetch(target, {
   method: 'POST',
@@ -50,7 +53,7 @@ const response = await fetch(target, {
       cancelled_last_24h: cancelled,
       delayed_last_24h: delayed,
     },
-    providerCount: Number.isFinite(providerCount) ? providerCount : null,
+    providerCount: normalizedProviderCount,
   }),
   signal: AbortSignal.timeout(120000),
 });

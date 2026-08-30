@@ -14,6 +14,9 @@ export const updateSettingsSchema = z
     maintenanceMode: z.boolean().optional(),
     requireNationalId: z.boolean().optional(),
     powerOfAttorneyUrl: z.string().trim().max(2000).nullable().optional(),
+    powerOfAttorneyDocumentUrl: z.string().trim().max(2000).nullable().optional(),
+    passengerRightsUrl: z.string().trim().max(2000).nullable().optional(),
+    rightsDocumentUrl: z.string().trim().max(2000).nullable().optional(),
     smsTemplates: z.object({
       registration: z.string().trim().max(3000).optional(),
       statusUpdate: z.string().trim().max(3000).optional(),

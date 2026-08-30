@@ -10,6 +10,7 @@ uploads/
 backend/database/
 **/.ocr-cache/
 **/.ocr-lang-data/
+.temp/
 *.log
 *.zip
 *.sql

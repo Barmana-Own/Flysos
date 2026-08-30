@@ -17,6 +17,8 @@ import {
   updateClaimStatus,
 } from '../controllers/adminController.js';
 
+import { adminFlightPushStatus } from '../controllers/flightImportController.js';
+
 import {
   createExpert,
   dashboard,
@@ -47,7 +49,7 @@ import {
   requireSupervisor,
 } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { upload } from '../middleware/upload.js';
+import { cmsUpload, upload } from '../middleware/upload.js';
 import {
   createCmsPage,
   deleteCmsMedia,
@@ -177,6 +179,11 @@ adminRoutes.post(
   asyncHandler(adminSyncFlightCache)
 );
 
+adminRoutes.get(
+  '/flight-cache/push-status',
+  asyncHandler(adminFlightPushStatus)
+);
+
 adminRoutes.get('/cms/pages', requireCmsEditor, asyncHandler(listCmsPages));
 adminRoutes.post('/cms/pages', requireCmsEditor, asyncHandler(createCmsPage));
 adminRoutes.get('/cms/pages/:id', requireCmsEditor, asyncHandler(getCmsPage));
@@ -194,6 +201,6 @@ adminRoutes.get('/cms/pages/:id/versions', requireCmsEditor, asyncHandler(listCm
 adminRoutes.post('/cms/pages/:id/versions/:versionId/restore', requireCmsEditor, asyncHandler(restoreCmsPageVersion));
 
 adminRoutes.get('/cms/media', requireCmsEditor, asyncHandler(listCmsMedia));
-adminRoutes.post('/cms/media', requireCmsEditor, upload.single('file'), asyncHandler(uploadCmsMedia));
+adminRoutes.post('/cms/media', requireCmsEditor, cmsUpload.single('file'), asyncHandler(uploadCmsMedia));
 adminRoutes.patch('/cms/media/:id', requireCmsEditor, asyncHandler(updateCmsMedia));
 adminRoutes.delete('/cms/media/:id', requireCmsEditor, asyncHandler(deleteCmsMedia));

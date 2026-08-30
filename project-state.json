@@ -1,0 +1,138 @@
+{
+  "project": {
+    "name": "Flysos passenger-rights PDF upload repair",
+    "release": "2026-08-26-passenger-rights-fix",
+    "repositoryRevisionBaseline": "6dba406"
+  },
+  "followUpTask": {
+    "name": "Flight API reconnection",
+    "status": "COMPLETE_LOCALLY_PENDING_DEPLOYMENT",
+    "rootCause": [
+      "The HTTPS flight import route was not mounted.",
+      "The import controller referenced missing flight-cache service exports.",
+      "FLIGHT_IMPORT_SECRET was absent from environment wiring, leaving the import guard unusable."
+    ],
+    "artifacts": [
+      "backend/config/env.js",
+      "backend/controllers/flightImportController.js",
+      "backend/services/flightCacheService.js",
+      "backend/routes/publicRoutes.js",
+      "backend/routes/adminRoutes.js",
+      "backend/app.js",
+      "backend/middleware/errorHandler.js",
+      "tests/flight-api-regression.test.cjs",
+      "docs/06-api-design.md",
+      "docs/08-security-review.md",
+      "docs/11-deployment.md"
+    ],
+    "validation": {
+      "focusedFlightApiRegression": "PASS",
+      "fullRegressionSuite": "PASS",
+      "backendSyntax": "PASS",
+      "dependencyAudit": "PASS",
+      "applicationStartup": "PASS",
+      "productionDeployment": "NOT_PERFORMED"
+    },
+    "requiredProductionAction": "Deploy the updated backend, set the same strong FLIGHT_IMPORT_SECRET on FlySOS and the flight-data server, then schedule pushFlightsToFlySOS.mjs every five minutes."
+  },
+  "activeStage": "12-fullstack-final-review",
+  "completedStages": [
+    "01-project-analysis-prompt-engineering",
+    "02-design-system-ui-architecture",
+    "03-frontend-architecture",
+    "04-backend-architecture",
+    "05-database-architecture",
+    "06-api-integration",
+    "07-authentication-authorization",
+    "08-application-security",
+    "09-software-testing",
+    "10-qa-debugging",
+    "11-deployment-production",
+    "12-fullstack-final-review"
+  ],
+  "stageStatus": {
+    "01": "PASS",
+    "02": "PASS",
+    "03": "PASS",
+    "04": "PASS",
+    "05": "PASS",
+    "06": "PASS",
+    "07": "PASS",
+    "08": "PASS",
+    "09": "PASS",
+    "10": "PASS",
+    "11": "PASS",
+    "12": "PASS"
+  },
+  "artifacts": [
+    "docs/01-project-brief.md",
+    "docs/01-requirements.md",
+    "docs/02-design-system.md",
+    "docs/02-ui-architecture.md",
+    "docs/03-frontend-architecture.md",
+    "docs/04-backend-architecture.md",
+    "docs/05-database-architecture.md",
+    "docs/06-api-design.md",
+    "docs/07-authentication-authorization.md",
+    "docs/08-security-review.md",
+    "docs/09-test-plan.md",
+    "docs/09-test-results.md",
+    "docs/10-qa-report.md",
+    "docs/10-known-issues.md",
+    "docs/11-deployment.md",
+    "docs/11-operations-runbook.md",
+    "docs/12-final-review.md",
+    "design/tokens.json",
+    "README.md",
+    "release-manifest.json",
+    "backend/.env.example",
+    "backend/scripts/runLegalDocumentsMigration.js",
+    "backend/utils/fileValidation.js",
+    "backend/utils/legalDocument.js",
+    "project-integrity-manifest.md",
+    "tests/legal-documents-regression.test.cjs",
+    "tests/flight-api-regression.test.cjs",
+    "backend/controllers/flightImportController.js",
+    "backend/services/flightCacheService.js"
+  ],
+  "architectureDecisions": [
+    "Keep the existing prebuilt frontend asset pair and repair the backend contract rather than rebuilding unavailable frontend source.",
+    "Use passengerRightsUrl as the public/API name and rightsDocumentUrl as the canonical AppSetting storage column.",
+    "Store new CMS media under the CMS subdirectory and keep claim uploads outside public static serving.",
+    "Allow generic PDF MIME values only with a PDF extension and verify the uploaded PDF signature before persistence.",
+    "Reuse the existing HTTPS flight push architecture and MySQL flight-cache tables, with a shared advisory lock for pull and push synchronization.",
+    "Keep the larger request-body bound scoped to the flight import route and preserve the 1 MB limit for unrelated JSON APIs."
+  ],
+  "assumptions": [
+    "The configured MySQL database is available to deployment and can run the idempotent legal-document migration.",
+    "Existing root-level CmsMedia filenames are generated server-side and can be safely resolved through the legacy allow-list route.",
+    "The active browser bundles in the repository are the deployed frontend assets."
+  ],
+  "risks": [
+    "No MySQL server or production credentials are available for live migration/API verification in this workspace.",
+    "Actual external deployment was not authorized or performed.",
+    "The live flight cache will remain stale until the updated backend and the provider-side five-minute push job are deployed and configured."
+  ],
+  "unresolvedBlockers": [],
+  "validation": {
+    "focusedRegression": "PASS (19 tests)",
+    "existingClaimStructure": "PASS",
+    "backendSyntax": "PASS (52 files)",
+    "dependencyAudit": "PASS",
+    "productionDependencyInstall": "PASS",
+    "applicationStartupSmoke": "PASS",
+    "gitDiffCheck": "PASS",
+    "databaseMigrationExecution": "NOT_RUN",
+    "databaseApiEndToEnd": "NOT_RUN",
+    "frontendBuild": "NOT_RUN",
+    "externalDeployment": "NOT_PERFORMED"
+  },
+  "nextStage": "NONE",
+  "reworkHistory": [
+    "The first regression run failed on the missing passenger-rights schema/controller/public/upload-serving contract; the implementation repaired those root causes before downstream validation.",
+    "The historical broad public uploads mount was replaced with CMS-scoped static serving and a legacy CMS allow-list to preserve compatibility without exposing claim files.",
+    "Credential-like values in the tracked local environment example were replaced with safe placeholders during the security review.",
+    "The flight API follow-up restored the missing HTTPS import route/service contract and documented production deployment as pending."
+  ],
+  "projectStatus": "COMPLETE"
+}

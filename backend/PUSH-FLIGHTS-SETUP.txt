@@ -10,6 +10,9 @@
 FLIGHT_IMPORT_SECRET=یک-رشته-تصادفی-حداقل-۴۸-کاراکتری
 FLIGHT_CACHE_ENABLED=false
 
+مسیر دریافت داده در بک‌اند به صورت POST /api/flights/import فعال است و فقط
+در صورت ارسال همین کلید در هدر X-FlySOS-Import-Key درخواست را می‌پذیرد.
+
 2) بک‌اند FlySOS را Restart کنید.
 
 3) فایل scripts/pushFlightsToFlySOS.mjs را روی سرور پرواز کپی کنید.
@@ -32,5 +35,5 @@ curl -sS https://flysos.ir/api/flights/status?limit=3
 ---------------------------------------
 اگر به تنظیمات Nginx سرور 109.122.250.170 دسترسی دارید، API پورت 3000 را پشت یک دامنه
 HTTPS روی پورت 443 قرار دهید و در .env هاست FlySOS این مقدار را تنظیم کنید:
-EXTERNAL_FLIGHTS_RELAY_URL=https://flights-api.example.com/api/flights
+EXTERNAL_FLIGHTS_BASE_URL=https://flights-api.example.com/api/flights
 سپس FLIGHT_CACHE_ENABLED=true و Restart.

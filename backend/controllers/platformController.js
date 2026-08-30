@@ -25,6 +25,10 @@ import {
   getAdminAccessLevels,
   parseAdminAccessLevels,
 } from '../services/adminPermissionService.js';
+import {
+  mapLegalDocumentResponse,
+  resolveLegalDocumentUrls,
+} from '../utils/legalDocument.js';
 
 const roleLabels = {
   supervisor: 'مدیر ارشد',
@@ -148,11 +152,29 @@ let legalDocumentColumnsReady;
 async function ensureLegalDocumentColumns() {
   if (!legalDocumentColumnsReady) {
     legalDocumentColumnsReady = (async () => {
-      const columns = await query(
-        'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "AppSetting" AND COLUMN_NAME = "powerOfAttorneyUrl"'
+      const rows = await query(
+        'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "AppSetting" AND COLUMN_NAME IN ("powerOfAttorneyUrl", "rightsDocumentUrl", "powerOfAttorneyDocumentUrl", "passengerRightsUrl")'
       );
-      if (!columns.length) {
+      const columns = new Set(rows.map((row) => row.COLUMN_NAME));
+
+      if (!columns.has('powerOfAttorneyUrl')) {
         await query('ALTER TABLE AppSetting ADD COLUMN powerOfAttorneyUrl LONGTEXT NULL AFTER requireNationalId');
+        columns.add('powerOfAttorneyUrl');
+      }
+      if (!columns.has('rightsDocumentUrl')) {
+        await query('ALTER TABLE AppSetting ADD COLUMN rightsDocumentUrl LONGTEXT NULL AFTER powerOfAttorneyUrl');
+        columns.add('rightsDocumentUrl');
+      }
+
+      if (columns.has('powerOfAttorneyDocumentUrl')) {
+        await query(
+          'UPDATE AppSetting SET powerOfAttorneyUrl = COALESCE(powerOfAttorneyUrl, powerOfAttorneyDocumentUrl) WHERE id = "default"'
+        );
+      }
+      if (columns.has('passengerRightsUrl')) {
+        await query(
+          'UPDATE AppSetting SET rightsDocumentUrl = COALESCE(rightsDocumentUrl, passengerRightsUrl) WHERE id = "default"'
+        );
       }
     })().catch((error) => {
       legalDocumentColumnsReady = undefined;
@@ -606,7 +628,7 @@ export async function getSettings(_req, res) {
     autoSms: Boolean(settings.autoSms),
     maintenanceMode: Boolean(settings.maintenanceMode),
     requireNationalId: Boolean(settings.requireNationalId),
-    powerOfAttorneyUrl: settings.powerOfAttorneyUrl || '',
+    ...mapLegalDocumentResponse(settings),
     smsTemplates,
     smsConfigured: isSmsConfigured(),
   });
@@ -614,7 +636,7 @@ export async function getSettings(_req, res) {
 
 export async function getPublicLegalDocuments(_req, res) {
   const settings = await getDefaultSettings();
-  res.json({ powerOfAttorneyUrl: settings.powerOfAttorneyUrl || '' });
+  res.json(mapLegalDocumentResponse(settings));
 }
 
 export async function sendUserSms(req, res) {
@@ -662,6 +684,7 @@ export async function updateSettings(req, res) {
 
   const settingsList = await query('SELECT * FROM AppSetting WHERE id = "default" LIMIT 1');
   const current = settingsList[0] || {};
+  const legalDocuments = resolveLegalDocumentUrls(body, current);
   const currentSmsTemplates = normalizeSmsTemplates(current.smsTemplates);
   const smsTemplates = normalizeSmsTemplates({
     ...currentSmsTemplates,
@@ -671,7 +694,7 @@ export async function updateSettings(req, res) {
   if (settingsList.length > 0) {
     if (smsColumnReady) {
       await query(
-        'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ?, smsTemplates = ? WHERE id = "default"',
+        'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ?, rightsDocumentUrl = ?, smsTemplates = ? WHERE id = "default"',
         [
           body.siteName ?? current.siteName ?? 'سامانه حقوقی فلای‌سوس',
           body.smsGateway ?? current.smsGateway ?? '',
@@ -679,13 +702,14 @@ export async function updateSettings(req, res) {
           body.autoSms ?? Boolean(current.autoSms ?? true),
           body.maintenanceMode ?? Boolean(current.maintenanceMode ?? false),
           body.requireNationalId ?? Boolean(current.requireNationalId ?? true),
-          body.powerOfAttorneyUrl ?? current.powerOfAttorneyUrl ?? '',
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
           JSON.stringify(smsTemplates),
         ]
       );
     } else {
       await query(
-        'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ? WHERE id = "default"',
+        'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ?, rightsDocumentUrl = ? WHERE id = "default"',
         [
           body.siteName ?? current.siteName ?? 'سامانه حقوقی فلای‌سوس',
           body.smsGateway ?? current.smsGateway ?? '',
@@ -693,14 +717,15 @@ export async function updateSettings(req, res) {
           body.autoSms ?? Boolean(current.autoSms ?? true),
           body.maintenanceMode ?? Boolean(current.maintenanceMode ?? false),
           body.requireNationalId ?? Boolean(current.requireNationalId ?? true),
-          body.powerOfAttorneyUrl ?? current.powerOfAttorneyUrl ?? '',
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
         ]
       );
     }
   } else {
     if (smsColumnReady) {
       await query(
-        'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl, smsTemplates) VALUES ("default", ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl, rightsDocumentUrl, smsTemplates) VALUES ("default", ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           body.siteName || 'سامانه حقوقی فلای‌سوس',
           body.smsGateway || 'پیشگام رایان',
@@ -708,13 +733,14 @@ export async function updateSettings(req, res) {
           body.autoSms ?? true,
           body.maintenanceMode ?? false,
           body.requireNationalId ?? true,
-          body.powerOfAttorneyUrl ?? '',
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
           JSON.stringify(smsTemplates),
         ]
       );
     } else {
       await query(
-        'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl) VALUES ("default", ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl, rightsDocumentUrl) VALUES ("default", ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           body.siteName || 'سامانه حقوقی فلای‌سوس',
           body.smsGateway || 'پیشگام رایان',
@@ -722,7 +748,8 @@ export async function updateSettings(req, res) {
           body.autoSms ?? true,
           body.maintenanceMode ?? false,
           body.requireNationalId ?? true,
-          body.powerOfAttorneyUrl ?? '',
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
         ]
       );
     }
@@ -738,7 +765,7 @@ export async function updateSettings(req, res) {
     autoSms: Boolean(updatedSettings.autoSms),
     maintenanceMode: Boolean(updatedSettings.maintenanceMode),
     requireNationalId: Boolean(updatedSettings.requireNationalId),
-    powerOfAttorneyUrl: updatedSettings.powerOfAttorneyUrl || '',
+    ...mapLegalDocumentResponse(updatedSettings),
     smsTemplates: updatedSmsTemplates,
     smsConfigured: isSmsConfigured(),
   });

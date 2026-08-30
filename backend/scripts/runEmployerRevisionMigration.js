@@ -63,6 +63,10 @@ try {
   await addColumn(connection, 'AppSetting', 'customHeadCode', 'LONGTEXT NULL');
   await addColumn(connection, 'AppSetting', 'rightsDocumentUrl', 'LONGTEXT NULL');
   await addColumn(connection, 'AppSetting', 'powerOfAttorneyDocumentUrl', 'LONGTEXT NULL');
+  await addColumn(connection, 'AppSetting', 'powerOfAttorneyUrl', 'LONGTEXT NULL');
+  await connection.query(
+    'UPDATE AppSetting SET powerOfAttorneyUrl = COALESCE(powerOfAttorneyUrl, powerOfAttorneyDocumentUrl) WHERE id = "default"'
+  );
 
   await addColumn(connection, 'CmsPage', 'pageType', "VARCHAR(30) NOT NULL DEFAULT 'page'");
   await addColumn(connection, 'CmsPage', 'category', 'VARCHAR(191) NULL');

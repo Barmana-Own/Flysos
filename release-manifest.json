@@ -1,0 +1,59 @@
+{
+  "project": "Flysos passenger-rights PDF upload repair",
+  "release": "2026-08-27-flight-api-reconnect",
+  "finalStageStatus": "PASS",
+  "workflowStatus": "COMPLETE",
+  "projectStatus": "COMPLETE_LOCALLY_PENDING_DEPLOYMENT",
+  "deploymentStatus": "NOT_PERFORMED",
+  "sourceLayout": {
+    "frontend": "index.html, admin/, assets/",
+    "backend": "backend/",
+    "tests": "tests/",
+    "documentation": "docs/"
+  },
+  "runtime": {
+    "node": ">=22",
+    "database": "MySQL-compatible database"
+  },
+  "commands": {
+    "install": "cd backend && npm ci --omit=dev",
+    "migration": "cd backend && npm run db:legal",
+    "start": "cd backend && npm start",
+    "test": "node --test tests/*.test.cjs",
+    "audit": "cd backend && npm audit --omit=dev"
+  },
+  "validation": {
+    "tests": "PASS: 19 passed, 0 failed",
+    "backendSyntax": "PASS: 52 files",
+    "dependencyAudit": "PASS: 0 vulnerabilities",
+    "databaseMigration": "NOT_RUN: no MySQL service or credentials in workspace",
+    "frontendBuild": "NOT_RUN: committed frontend assets without source/build project",
+    "externalDeployment": "NOT_PERFORMED: no authorized target"
+  },
+  "artifacts": [
+    "backend/.env.example",
+    "backend/scripts/runLegalDocumentsMigration.js",
+    "backend/utils/fileValidation.js",
+    "backend/utils/legalDocument.js",
+    "tests/legal-documents-regression.test.cjs",
+    "tests/flight-api-regression.test.cjs",
+    "backend/app.js",
+    "backend/config/env.js",
+    "backend/controllers/flightImportController.js",
+    "backend/services/flightCacheService.js",
+    "backend/routes/publicRoutes.js",
+    "backend/routes/adminRoutes.js",
+    "backend/scripts/pushFlightsToFlySOS.mjs",
+    "docs/06-api-design.md",
+    "docs/08-security-review.md",
+    "docs/11-deployment.md",
+    "docs/12-final-review.md",
+    "project-state.json",
+    "project-integrity-manifest.md"
+  ],
+  "knownNonBlockingIssues": [
+    "Live MySQL/API end-to-end verification is environment-dependent and was not run.",
+    "The updated flight import backend and provider-side push cron still require production deployment and secret provisioning.",
+    "Actual external deployment was not performed."
+  ]
+}

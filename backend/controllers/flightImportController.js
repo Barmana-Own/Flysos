@@ -1,30 +1,62 @@
-import { env } from '../config/env.js';
+import { timingSafeEqual } from 'node:crypto';
+
+import { env, FLIGHT_IMPORT_SECRET_MIN_LENGTH } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
-import { importPushedFlightFeeds, getFlightPushStatus } from '../services/flightCacheService.js';
+import {
+  getFlightPushStatus,
+  importPushedFlightFeeds,
+  validatePushedFlightPayload,
+} from '../services/flightCacheService.js';
+
+function isImportSecretConfigured() {
+  return Boolean(
+    env.flightImportSecret &&
+    env.flightImportSecret.length >= FLIGHT_IMPORT_SECRET_MIN_LENGTH
+  );
+}
+
+function secretsMatch(supplied, expected) {
+  const suppliedBuffer = Buffer.from(supplied, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+
+  return suppliedBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(suppliedBuffer, expectedBuffer);
+}
 
 function requireImportSecret(req) {
-  if (!env.flightImportSecret) {
+  if (!isImportSecretConfigured()) {
     throw new AppError('FLIGHT_IMPORT_SECRET is not configured.', 503, 'FLIGHT_IMPORT_NOT_CONFIGURED');
   }
-  const supplied = String(req.headers['x-flysos-import-key'] || '').trim();
-  if (!supplied || supplied !== env.flightImportSecret) {
+
+  const headerValue = req.headers['x-flysos-import-key'];
+  const supplied = typeof headerValue === 'string' ? headerValue.trim() : '';
+  if (!supplied || !secretsMatch(supplied, env.flightImportSecret)) {
     throw new AppError('Invalid flight import key.', 401, 'INVALID_FLIGHT_IMPORT_KEY');
   }
 }
 
 export async function importFlightFeeds(req, res) {
   requireImportSecret(req);
-  const feeds = req.body?.feeds;
-  if (!feeds || typeof feeds !== 'object' || Array.isArray(feeds)) {
-    throw new AppError('feeds object is required.', 400, 'INVALID_FLIGHT_IMPORT_PAYLOAD');
+
+  let validatedPayload;
+  try {
+    validatedPayload = validatePushedFlightPayload(req.body);
+  } catch (error) {
+    if (error?.code === 'INVALID_FLIGHT_IMPORT_PAYLOAD') {
+      throw new AppError('Invalid flight import payload.', 400, 'INVALID_FLIGHT_IMPORT_PAYLOAD');
+    }
+
+    throw error;
   }
+
+  const { feeds, providerCount } = validatedPayload;
 
   // Shared-host proxies may terminate a long-running import with HTTP 504 even
   // though the Node process is still working. Acknowledge the authenticated
   // payload immediately, then perform the database import in the background.
   const payload = {
     feeds,
-    providerCount: req.body?.providerCount ?? null,
+    providerCount,
   };
   const acceptedAt = new Date().toISOString();
 

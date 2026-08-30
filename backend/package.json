@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node index.js",
     "start": "node index.js",
-    "db:cms": "node scripts/runCmsMigration.js"
+    "db:cms": "node scripts/runCmsMigration.js",
+    "db:legal": "node scripts/runLegalDocumentsMigration.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

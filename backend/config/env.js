@@ -36,6 +36,8 @@ function optionalEnv(name) {
     : null;
 }
 
+export const FLIGHT_IMPORT_SECRET_MIN_LENGTH = 32;
+
 function requiredEnv(name, fallback = null) {
   const value = optionalEnv(name);
 
@@ -62,6 +64,7 @@ export const env = Object.freeze({
   dbPassword: process.env.DB_PASSWORD ?? '',
 
   jwtSecret: optionalEnv('JWT_SECRET'),
+  flightImportSecret: optionalEnv('FLIGHT_IMPORT_SECRET'),
   uploadDir: process.env.UPLOAD_DIR?.trim() || 'uploads',
 
   smsApiBaseUrl: process.env.SMS_API_BASE_URL?.trim() || 'https://smsapi.pishgamrayan.com',
@@ -69,7 +72,9 @@ export const env = Object.freeze({
   smsSenderNumber: optionalEnv('SMS_SENDER_NUMBER'),
   smsTimeoutMs: readPositiveInteger(process.env.SMS_TIMEOUT_MS, 10000, 60000),
 
-  externalFlightsBaseUrl: optionalEnv('EXTERNAL_FLIGHTS_BASE_URL'),
+  externalFlightsBaseUrl:
+    optionalEnv('EXTERNAL_FLIGHTS_BASE_URL') ||
+    optionalEnv('EXTERNAL_FLIGHTS_RELAY_URL'),
   externalFlightsUsername: optionalEnv('EXTERNAL_FLIGHTS_USERNAME'),
   externalFlightsPassword: optionalEnv('EXTERNAL_FLIGHTS_PASSWORD'),
   externalFlightsLimit: readPositiveInteger(

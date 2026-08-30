@@ -6,25 +6,13 @@ import multer from 'multer';
 
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
+import { isSupportedUploadMetadata } from '../utils/fileValidation.js';
 
-const uploadDirectory = path.resolve(process.cwd(), env.uploadDir);
+export const uploadDirectory = path.resolve(process.cwd(), env.uploadDir);
+export const cmsUploadDirectory = path.join(uploadDirectory, 'cms');
 
 fs.mkdirSync(uploadDirectory, { recursive: true });
-
-const allowedMimeTypes = new Set([
-  'application/pdf',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-]);
-
-const allowedExtensions = new Set([
-  '.pdf',
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-]);
+fs.mkdirSync(cmsUploadDirectory, { recursive: true });
 
 function normalizeOriginalName(name) {
   if (!name) return 'upload';
@@ -40,29 +28,27 @@ function normalizeOriginalName(name) {
     .slice(0, 190);
 }
 
-const storage = multer.diskStorage({
-  destination(_req, _file, callback) {
-    callback(null, uploadDirectory);
-  },
+function createStorage(destination) {
+  return multer.diskStorage({
+    destination(_req, _file, callback) {
+      callback(null, destination);
+    },
 
-  filename(_req, file, callback) {
-    const extension = path.extname(file.originalname).toLowerCase();
+    filename(_req, file, callback) {
+      const extension = path.extname(file.originalname).toLowerCase();
 
-    callback(
-      null,
-      `${Date.now()}-${randomUUID()}${extension}`
-    );
-  },
-});
+      callback(
+        null,
+        `${Date.now()}-${randomUUID()}${extension}`
+      );
+    },
+  });
+}
 
 function fileFilter(_req, file, callback) {
   file.originalname = normalizeOriginalName(file.originalname);
-  const extension = path.extname(file.originalname).toLowerCase();
 
-  if (
-    !allowedMimeTypes.has(file.mimetype) ||
-    !allowedExtensions.has(extension)
-  ) {
+  if (!isSupportedUploadMetadata(file)) {
     callback(
       new AppError(
         'Only PDF, JPG, JPEG, PNG, and WEBP files are allowed.',
@@ -78,7 +64,17 @@ function fileFilter(_req, file, callback) {
 }
 
 export const upload = multer({
-  storage,
+  storage: createStorage(uploadDirectory),
+  fileFilter,
+
+  limits: {
+    files: 4,
+    fileSize: 15 * 1024 * 1024,
+  },
+});
+
+export const cmsUpload = multer({
+  storage: createStorage(cmsUploadDirectory),
   fileFilter,
 
   limits: {

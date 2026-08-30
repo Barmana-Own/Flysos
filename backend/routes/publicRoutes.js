@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { health } from '../controllers/healthController.js';
 import { publicFlightStatuses } from '../controllers/flightController.js';
+import { importFlightFeeds } from '../controllers/flightImportController.js';
 
 import {
   saveQuestionnaire,
@@ -32,6 +33,11 @@ publicRoutes.get('/legal-documents', asyncHandler(getPublicLegalDocuments));
 publicRoutes.get(
   '/flights/status',
   asyncHandler(publicFlightStatuses)
+);
+
+publicRoutes.post(
+  '/flights/import',
+  asyncHandler(importFlightFeeds)
 );
 
 publicRoutes.post(

@@ -1,17 +1,74 @@
 import { randomUUID } from 'node:crypto';
 
 import { pool, query, transaction } from '../config/db.js';
-import { env } from '../config/env.js';
+import { env, FLIGHT_IMPORT_SECRET_MIN_LENGTH } from '../config/env.js';
 import { getExternalFlightsCount, normalizeFlights } from './externalFlightService.js';
 
 const DEFAULT_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_LIMIT = 500;
 const PROVIDER_TIMEOUT_MS = 45_000;
 const PROVIDER_RETRIES = 2;
+const MAX_FLIGHTS_PER_FEED = 10_000;
+export const PUSHED_FLIGHT_FEED_SOURCES = Object.freeze([
+  'all_recent',
+  'cancelled_last_24h',
+  'delayed_last_24h',
+]);
+const MAX_PROVIDER_COUNT = 2_147_483_647;
 let schedulerStarted = false;
 let syncInProgress = false;
 let syncTimer = null;
 let flightCacheTablesPromise = null;
+
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function invalidPushedFlightPayload() {
+  const error = new Error('Invalid flight import payload.');
+  error.code = 'INVALID_FLIGHT_IMPORT_PAYLOAD';
+  return error;
+}
+
+export function validatePushedFlightPayload(payload = {}) {
+  if (!isPlainObject(payload) || !isPlainObject(payload.feeds)) {
+    throw invalidPushedFlightPayload();
+  }
+
+  const feedNames = Object.keys(payload.feeds);
+  if (
+    !feedNames.includes('all_recent') ||
+    feedNames.some((sourceName) => !PUSHED_FLIGHT_FEED_SOURCES.includes(sourceName))
+  ) {
+    throw invalidPushedFlightPayload();
+  }
+
+  for (const sourceName of feedNames) {
+    const feed = payload.feeds[sourceName];
+    if (!Array.isArray(feed) && !isPlainObject(feed)) {
+      throw invalidPushedFlightPayload();
+    }
+  }
+
+  const providerCount = payload.providerCount ?? null;
+  if (
+    providerCount !== null &&
+    (!Number.isSafeInteger(providerCount) || providerCount < 0 || providerCount > MAX_PROVIDER_COUNT)
+  ) {
+    throw invalidPushedFlightPayload();
+  }
+
+  return { feeds: payload.feeds, providerCount };
+}
+
+function emptyFlightCounts() {
+  return { totalFlights: 0, delayedFlights: 0, cancelledFlights: 0 };
+}
 
 function nowDate() {
   return new Date();
@@ -238,6 +295,41 @@ async function ensureFlightCacheTables() {
   return flightCacheTablesPromise;
 }
 
+async function withFlightSyncLock(callback, { skipIfInProgress = true } = {}) {
+  if (syncInProgress && skipIfInProgress) {
+    return { ok: true, skipped: true, reason: 'sync_in_progress' };
+  }
+
+  const lockName = 'flysos_flight_feed_sync';
+  const lockConnection = await pool.getConnection();
+  let lockAcquired = false;
+  let ownsSyncInProgress = false;
+
+  try {
+    const [lockRows] = await lockConnection.query(
+      'SELECT GET_LOCK(?, 0) AS acquired',
+      [lockName],
+    );
+    lockAcquired = Number(lockRows[0]?.acquired) === 1;
+
+    if (!lockAcquired) {
+      return { ok: true, skipped: true, reason: 'sync_running_on_another_worker' };
+    }
+
+    syncInProgress = true;
+    ownsSyncInProgress = true;
+    return await callback();
+  } finally {
+    if (ownsSyncInProgress) {
+      syncInProgress = false;
+    }
+    if (lockAcquired) {
+      await lockConnection.query('SELECT RELEASE_LOCK(?)', [lockName]).catch(() => undefined);
+    }
+    lockConnection.release();
+  }
+}
+
 async function insertRun({ sourceName, status, totalFlights = 0, delayedFlights = 0, cancelledFlights = 0, errorMessage = null, startedAt, finishedAt }) {
   await query(
     'INSERT INTO FlightFeedRun (id, sourceName, status, totalFlights, delayedFlights, cancelledFlights, errorMessage, startedAt, finishedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -294,6 +386,10 @@ async function fetchFeed(feed, limit) {
 
 async function saveFeedFlights(sourceName, payload, fetchedAt) {
   const flights = normalizeFlights(payload, sourceName);
+  if (flights.length > MAX_FLIGHTS_PER_FEED) {
+    throw new Error(`Flight feed contains more than ${MAX_FLIGHTS_PER_FEED} records.`);
+  }
+
   const delayedFlights = flights.filter((flight) => flight.statusType === 'delay').length;
   const cancelledFlights = flights.filter((flight) => flight.statusType === 'cancelled').length;
 
@@ -331,11 +427,9 @@ async function saveFeedFlights(sourceName, payload, fetchedAt) {
     }
   });
 
-  return {
-    totalFlights: flights.length,
-    delayedFlights,
-    cancelledFlights,
-  };
+  return flights.length
+    ? { totalFlights: flights.length, delayedFlights, cancelledFlights }
+    : emptyFlightCounts();
 }
 
 async function syncProviderCountSnapshot() {
@@ -357,7 +451,7 @@ async function syncProviderCountSnapshot() {
 }
 
 async function getCachedSyncState() {
-  const sources = ['all_recent', 'cancelled_last_24h', 'delayed_last_24h'];
+  const sources = PUSHED_FLIGHT_FEED_SOURCES;
   const entries = await Promise.all(sources.map(async (sourceName) => {
     const rows = await query(
       `SELECT COUNT(*) AS total, MAX(fetchedAt) AS lastSuccessfulSyncAt FROM ExternalFlightSnapshot
@@ -397,26 +491,7 @@ async function getCachedSyncState() {
 export async function syncFlightFeeds({ limit = DEFAULT_LIMIT, force = false } = {}) {
   await ensureFlightCacheTables();
 
-  if (syncInProgress && !force) {
-    return { ok: true, skipped: true, reason: 'sync_in_progress' };
-  }
-
-  const lockName = 'flysos_flight_feed_sync';
-  const lockConnection = await pool.getConnection();
-  let lockAcquired = false;
-
-  try {
-    const [lockRows] = await lockConnection.query(
-      'SELECT GET_LOCK(?, 0) AS acquired',
-      [lockName],
-    );
-    lockAcquired = Number(lockRows[0]?.acquired) === 1;
-
-    if (!lockAcquired) {
-      return { ok: true, skipped: true, reason: 'sync_running_on_another_worker' };
-    }
-
-    syncInProgress = true;
+  return withFlightSyncLock(async () => {
     const feeds = configuredFeeds();
     const startedAt = nowDate();
     const results = {};
@@ -494,13 +569,156 @@ export async function syncFlightFeeds({ limit = DEFAULT_LIMIT, force = false } =
       ? { ok: true, count: countResult.count, error: null, usedCache: false, lastSuccessfulSyncAt: countResult.lastSuccessfulSyncAt, lastAttemptAt: countResult.lastAttemptAt, lastFailedSyncAt: countResult.lastFailedSyncAt }
       : { ok: false, count: null, error: countResult.errorMessage || 'Count feed failed.', usedCache: cachedState.providerCount !== null, cachedCount: cachedState.providerCount, lastSuccessfulSyncAt: cachedState.providerSuccessfulAt, lastAttemptAt: countResult.lastAttemptAt, lastFailedSyncAt: countResult.lastFailedSyncAt };
     return { ok: Object.values(results).some((result) => result.ok), results };
-  } finally {
-    syncInProgress = false;
-    if (lockAcquired) {
-      await lockConnection.query('SELECT RELEASE_LOCK(?)', [lockName]).catch(() => undefined);
+  }, { skipIfInProgress: !force });
+}
+
+export async function importPushedFlightFeeds(payload = {}) {
+  const { feeds, providerCount } = validatePushedFlightPayload(payload);
+  await ensureFlightCacheTables();
+
+  return withFlightSyncLock(async () => {
+    const cachedState = await getCachedSyncState();
+    const results = {};
+
+    for (const sourceName of PUSHED_FLIGHT_FEED_SOURCES) {
+      if (!Object.prototype.hasOwnProperty.call(feeds, sourceName)) {
+        continue;
+      }
+
+      const feedStartedAt = nowDate();
+
+      try {
+        const finishedAt = nowDate();
+        const counts = await saveFeedFlights(sourceName, feeds[sourceName], finishedAt);
+
+        await insertRun({
+          sourceName,
+          status: 'success',
+          ...counts,
+          startedAt: feedStartedAt,
+          finishedAt,
+        });
+
+        results[sourceName] = {
+          ok: true,
+          saved: counts.totalFlights,
+          error: null,
+          usedCache: false,
+          lastSuccessfulSyncAt: finishedAt,
+          lastAttemptAt: finishedAt,
+          lastFailedSyncAt: cachedState.meta[sourceName]?.lastFailedSyncAt || null,
+        };
+      } catch (error) {
+        const finishedAt = nowDate();
+        const message = error?.message || 'Flight feed import failed.';
+
+        await insertRun({
+          sourceName,
+          status: 'error',
+          errorMessage: message,
+          startedAt: feedStartedAt,
+          finishedAt,
+        }).catch(() => undefined);
+
+        const cachedRows = cachedState.rows[sourceName] || 0;
+        results[sourceName] = {
+          ok: false,
+          saved: 0,
+          error: message,
+          usedCache: cachedRows > 0,
+          cachedRows,
+          lastSuccessfulSyncAt: cachedState.successfulAt[sourceName] || null,
+          lastAttemptAt: finishedAt,
+          lastFailedSyncAt: finishedAt,
+        };
+      }
     }
-    lockConnection.release();
-  }
+
+    if (providerCount !== null) {
+      const startedAt = nowDate();
+
+      try {
+        const finishedAt = nowDate();
+        await query(
+          'INSERT INTO ExternalFlightCountSnapshot (id, providerCount, rawPayload, fetchedAt) VALUES (?, ?, ?, ?)',
+          [`ffcnt-${randomUUID()}`, providerCount, serializable({ count: providerCount }), finishedAt],
+        );
+        await insertRun({
+          sourceName: 'provider_count',
+          status: 'success',
+          totalFlights: providerCount,
+          startedAt,
+          finishedAt,
+        });
+        results.provider_count = {
+          ok: true,
+          count: providerCount,
+          error: null,
+          usedCache: false,
+          lastSuccessfulSyncAt: finishedAt,
+          lastAttemptAt: finishedAt,
+          lastFailedSyncAt: cachedState.meta.provider_count?.lastFailedSyncAt || null,
+        };
+      } catch (error) {
+        const finishedAt = nowDate();
+        const message = error?.message || 'Provider count import failed.';
+
+        await insertRun({
+          sourceName: 'provider_count',
+          status: 'error',
+          errorMessage: message,
+          startedAt,
+          finishedAt,
+        }).catch(() => undefined);
+
+        results.provider_count = {
+          ok: false,
+          count: null,
+          error: message,
+          usedCache: cachedState.providerCount !== null,
+          cachedCount: cachedState.providerCount,
+          lastSuccessfulSyncAt: cachedState.providerSuccessfulAt,
+          lastAttemptAt: finishedAt,
+          lastFailedSyncAt: finishedAt,
+        };
+      }
+    }
+
+    return {
+      ok: Object.values(results).some((result) => result.ok),
+      mode: 'push_https_async',
+      results,
+    };
+  });
+}
+
+export async function getFlightPushStatus() {
+  await ensureFlightCacheTables();
+  const state = await getCachedSyncState();
+
+  return {
+    ok: true,
+    mode: 'push_https_async',
+    importConfigured: Boolean(
+      env.flightImportSecret &&
+      env.flightImportSecret.length >= FLIGHT_IMPORT_SECRET_MIN_LENGTH
+    ),
+    schedulerEnabled: asBool(process.env.FLIGHT_CACHE_ENABLED, true),
+    syncInProgress,
+    feeds: Object.fromEntries(PUSHED_FLIGHT_FEED_SOURCES.map((sourceName) => [
+      sourceName,
+      {
+        rows: state.rows[sourceName] || 0,
+        lastSuccessfulSyncAt: state.successfulAt[sourceName] || null,
+        ...state.meta[sourceName],
+      },
+    ])),
+    providerCount: {
+      count: state.providerCount,
+      lastSuccessfulSyncAt: state.providerSuccessfulAt,
+      ...state.meta.provider_count,
+    },
+  };
 }
 
 export async function getCachedFlightStatuses(limit = 100) {
