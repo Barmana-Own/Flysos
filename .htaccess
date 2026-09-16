@@ -16,6 +16,12 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  # Backend source, runtime logs, backups and environment files must never be
+  # served as public static files. The Node application remains available via
+  # the /api routes handled by Passenger.
+  RewriteRule ^backend(?:/|$) - [F,L,NC]
+
   RewriteCond %{REQUEST_URI} !^/api(?:/|$) [NC]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d

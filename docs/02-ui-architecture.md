@@ -42,6 +42,12 @@
 - Preserve LTR behavior for URLs and file names.
 - Use semantic form controls, visible focus, text feedback, and keyboard-accessible download links.
 
+## Questionnaire validation feedback
+
+- On step 3 of claim registration, keep the existing required-answer rule for all visible questions.
+- Render an inline red validation message immediately above the active question list when the user tries to continue with an incomplete questionnaire.
+- Use an accessible alert role and clear the message after an answer is selected or the problem type changes; do not use a native browser alert for this validation case.
+
 ## Handoff to Stage 03
 
 The active prebuilt bundles already implement the required states and contract. Stage 03 verifies the bundle references and avoids an unverified frontend rebuild.

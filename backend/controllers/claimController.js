@@ -13,13 +13,10 @@ import {
   trackClaimSchema,
 } from '../validation/claimSchemas.js';
 
-import {
-  extractTicketData,
-  hasTicketFields,
-} from '../services/ticketExtractionService.js';
+import { scheduleTicketExtraction } from '../services/ticketExtractionJobService.js';
+import { scheduleRegistrationNotification } from '../services/claimNotificationJobService.js';
 import { mapClaimForPublic } from '../services/claimMapper.js';
-import { sendAutomaticSms } from '../services/smsService.js';
-import { getSmsTemplate } from '../services/smsTemplateService.js';
+import { validateQuestionnaireAnswers } from '../services/questionnaireService.js';
 
 function createTrackingCode() {
   return `FS${Math.floor(100000 + Math.random() * 900000)}`;
@@ -244,9 +241,7 @@ export async function uploadClaimFiles(req, res) {
   );
 
   const createdFiles = [];
-  let extractedTicketData = null;
-  let extractionWarning = null;
-  let extractionSucceeded = false;
+  let ticketExtractionQueued = false;
 
   for (const file of uploadedFiles) {
     let record;
@@ -283,106 +278,27 @@ export async function uploadClaimFiles(req, res) {
       continue;
     }
 
-    try {
-      const extractedData = await extractTicketData(
-        file.path,
-        file.mimetype,
-        {
-          nationalId: claim.nationalId,
-        }
-      );
-
-      extractedTicketData = extractedData;
-      extractionSucceeded = hasTicketFields(extractedData);
-      const safeExtractedData = extractionSucceeded
-        ? extractedData
-        : { rawText: extractedData.rawText || '' };
-
-      // Save extracted JSON on claim
-      await query(
-        'UPDATE Claim SET extractedTicketData = ? WHERE id = ?',
-        [JSON.stringify(safeExtractedData), claim.id]
-      );
-
-      // Upsert FlightInfo
-      const flightExists = await query('SELECT id FROM FlightInfo WHERE claimId = ? LIMIT 1', [claim.id]);
-      if (flightExists.length > 0) {
-        if (extractionSucceeded) {
-          await query(
-            'UPDATE FlightInfo SET passengerName = ?, airline = ?, flightNumber = ?, flightDate = ?, scheduledTime = ?, origin = ?, destination = ?, route = ?, pnrCode = ?, ticketNumber = ?, ticketAmount = ?, flightClass = ?, rawText = ? WHERE claimId = ?',
-            [
-              extractedData.passengerName || null, extractedData.airline || null,
-              extractedData.flightNumber || null, extractedData.flightDate || null,
-              extractedData.scheduledTime || null, extractedData.origin || null,
-              extractedData.destination || null, extractedData.route || null,
-              extractedData.pnrCode || null, extractedData.ticketNumber || null,
-              extractedData.ticketAmount || null, extractedData.flightClass || null,
-              extractedData.rawText || null, claim.id,
-            ]
-          );
-        } else {
-          await query('UPDATE FlightInfo SET rawText = ? WHERE claimId = ?', [extractedData.rawText || null, claim.id]);
-        }
-      } else {
-        await query(
-          'INSERT INTO FlightInfo (id, claimId, passengerName, airline, flightNumber, flightDate, scheduledTime, origin, destination, route, pnrCode, ticketNumber, ticketAmount, flightClass, rawText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [
-            `clfli-${randomUUID()}`,
-            claim.id,
-            extractionSucceeded ? extractedData.passengerName || null : null,
-            extractionSucceeded ? extractedData.airline || null : null,
-            extractionSucceeded ? extractedData.flightNumber || null : null,
-            extractionSucceeded ? extractedData.flightDate || null : null,
-            extractionSucceeded ? extractedData.scheduledTime || null : null,
-            extractionSucceeded ? extractedData.origin || null : null,
-            extractionSucceeded ? extractedData.destination || null : null,
-            extractionSucceeded ? extractedData.route || null : null,
-            extractionSucceeded ? extractedData.pnrCode || null : null,
-            extractionSucceeded ? extractedData.ticketNumber || null : null,
-            extractionSucceeded ? extractedData.ticketAmount || null : null,
-            extractionSucceeded ? extractedData.flightClass || null : null,
-            extractedData.rawText || null,
-          ]
-        );
-      }
-
-      if (extractionSucceeded && extractedData.passengerName) {
-        // Update Passenger Name
-        await query(
-          'UPDATE Passenger SET name = ? WHERE claimId = ?',
-          [extractedData.passengerName, claim.id]
-        );
-
-        if (claim.customerId) {
-          // Update Customer Name
-          await query(
-            'UPDATE Customer SET name = ? WHERE id = ?',
-            [extractedData.passengerName, claim.customerId]
-          );
-        }
-      }
-
-      if (!extractionSucceeded) {
-        extractionWarning =
-          'Ticket text was read, but key flight fields could not be identified automatically.';
-      }
-    } catch (error) {
-      console.warn(
-        `[OCR] Automatic extraction failed for ${file.filename}: ${error.message}`
-      );
-
-      extractionWarning =
-        'The file was saved, but automatic ticket extraction failed.';
-    }
+    ticketExtractionQueued = true;
+    scheduleTicketExtraction({
+      file: {
+        id: record.id,
+        path: file.path,
+        mimetype: file.mimetype,
+        filename: file.filename,
+        originalname: file.originalname,
+      },
+      claim,
+    });
   }
 
   res.status(201).json({
     files: createdFiles.map(mapUploadedFile),
-    extractedTicketData,
+    extractedTicketData: null,
     ocr: {
       attempted: requestedType === 'ticket',
-      extracted: extractionSucceeded,
-      warning: extractionWarning,
+      extracted: false,
+      pending: ticketExtractionQueued,
+      warning: null,
     },
   });
 }
@@ -401,6 +317,25 @@ export async function saveQuestionnaire(req, res) {
   }
 
   const claim = claims[0];
+
+  const claimType = body.claimType || claim.claimType;
+  const questionnaireValidation = validateQuestionnaireAnswers(body.answers, claimType);
+
+  if (!questionnaireValidation.ok) {
+    if (questionnaireValidation.code === 'QUESTIONNAIRE_ANSWERS_REQUIRED') {
+      throw new AppError(
+        'لطفاً به تمام سوالات بخش انتخاب‌شده پاسخ دهید.',
+        400,
+        questionnaireValidation.code,
+      );
+    }
+
+    throw new AppError(
+      'اطلاعات پرسشنامه معتبر نیست.',
+      400,
+      questionnaireValidation.code,
+    );
+  }
 
   const hasInvalidReferralSource = body.answers.some(
     (answer) =>
@@ -421,10 +356,10 @@ export async function saveQuestionnaire(req, res) {
     await tx.query('DELETE FROM QuestionnaireAnswer WHERE claimId = ?', [claim.id]);
 
     // Insert answers in loop (safely parameterized)
-    for (const answer of body.answers) {
+    for (const answer of questionnaireValidation.answers) {
       await tx.query(
         'INSERT INTO QuestionnaireAnswer (id, claimId, questionId, question, answer) VALUES (?, ?, ?, ?, ?)',
-        [`clqa-${randomUUID()}`, claim.id, answer.questionId, answer.question, answer.answer ? 1 : 0]
+        [`clqa-${randomUUID()}`, claim.id, answer.questionId, answer.question, answer.answer === true ? 1 : 0]
       );
     }
   });
@@ -447,6 +382,47 @@ export async function submitClaim(req, res) {
 
   const claim = claims[0];
 
+  const claimType = body.claimType || claim.claimType;
+  const questionnaireRows = await query(
+    'SELECT questionId, question, answer FROM QuestionnaireAnswer WHERE claimId = ?',
+    [claim.id],
+  );
+  const questionnaireAnswers = questionnaireRows.map((answer) => ({
+    ...answer,
+    answer: answer.answer === null ? null : Boolean(answer.answer),
+  }));
+  const questionnaireValidation = validateQuestionnaireAnswers(questionnaireAnswers, claimType);
+
+  if (!questionnaireValidation.ok) {
+    if (questionnaireValidation.code === 'QUESTIONNAIRE_ANSWERS_REQUIRED') {
+      throw new AppError(
+        'لطفاً به تمام سوالات بخش انتخاب‌شده پاسخ دهید.',
+        400,
+        questionnaireValidation.code,
+      );
+    }
+
+    throw new AppError(
+      'اطلاعات پرسشنامه معتبر نیست.',
+      400,
+      questionnaireValidation.code,
+    );
+  }
+
+  const hasInvalidReferralSource = questionnaireAnswers.some(
+    (answer) =>
+      String(answer.questionId).startsWith('referral_') &&
+      !referralSourceQuestionIds.includes(answer.questionId),
+  );
+
+  if (hasInvalidReferralSource) {
+    throw new AppError(
+      'گزینه نحوه آشنایی با ما معتبر نیست.',
+      400,
+      'INVALID_REFERRAL_SOURCE',
+    );
+  }
+
   const referralAnswers = await query(
     `SELECT id FROM QuestionnaireAnswer
      WHERE claimId = ?
@@ -465,7 +441,7 @@ export async function submitClaim(req, res) {
   }
 
   await transaction(async (tx) => {
-    const newClaimType = body.claimType || claim.claimType;
+    const newClaimType = claimType;
 
     await tx.query(
       'UPDATE Claim SET claimType = ?, status = "under_review" WHERE id = ?',
@@ -479,13 +455,14 @@ export async function submitClaim(req, res) {
     );
   });
 
-  const freshClaims = await query('SELECT * FROM Claim WHERE id = ? LIMIT 1', [claim.id]);
-  const updatedClaim = freshClaims[0];
+  const updatedClaim = {
+    id: claim.id,
+    trackingCode: claim.trackingCode,
+    phoneNumber: claim.phoneNumber,
+    status: 'under_review',
+  };
 
-  await sendAutomaticSms(
-    updatedClaim.phoneNumber,
-    await getSmsTemplate('registration', { trackingCode: updatedClaim.trackingCode })
-  );
+  scheduleRegistrationNotification({ claim: updatedClaim });
 
   res.json({
     id: updatedClaim.id,

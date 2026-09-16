@@ -28,6 +28,16 @@ function readPositiveInteger(value, fallback, maximum = 10000) {
   return Math.min(parsed, maximum);
 }
 
+function readNonNegativeInteger(value, fallback, maximum = 10000) {
+  const parsed = Number(value ?? fallback);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return fallback;
+  }
+
+  return Math.min(parsed, maximum);
+}
+
 function optionalEnv(name) {
   const value = process.env[name];
 
@@ -62,6 +72,10 @@ export const env = Object.freeze({
   dbName: requiredEnv('DB_NAME'),
   dbUser: requiredEnv('DB_USER'),
   dbPassword: process.env.DB_PASSWORD ?? '',
+  dbConnectionLimit: readPositiveInteger(process.env.DB_CONNECTION_LIMIT, 15, 50),
+  dbQueueLimit: readNonNegativeInteger(process.env.DB_QUEUE_LIMIT, 0, 1000),
+  dbConnectTimeoutMs: readPositiveInteger(process.env.DB_CONNECT_TIMEOUT_MS, 10000, 60000),
+  dbIdleTimeoutMs: readPositiveInteger(process.env.DB_IDLE_TIMEOUT_MS, 60000, 600000),
 
   jwtSecret: optionalEnv('JWT_SECRET'),
   flightImportSecret: optionalEnv('FLIGHT_IMPORT_SECRET'),
@@ -71,6 +85,7 @@ export const env = Object.freeze({
   smsApiToken: optionalEnv('SMS_API_TOKEN'),
   smsSenderNumber: optionalEnv('SMS_SENDER_NUMBER'),
   smsTimeoutMs: readPositiveInteger(process.env.SMS_TIMEOUT_MS, 10000, 60000),
+  goftinoWidgetId: optionalEnv('GOFTINO_WIDGET_ID'),
 
   externalFlightsBaseUrl:
     optionalEnv('EXTERNAL_FLIGHTS_BASE_URL') ||

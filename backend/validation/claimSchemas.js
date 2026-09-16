@@ -61,6 +61,7 @@ export const startClaimSchema = z.object({
 });
 
 export const questionnaireSchema = z.object({
+  claimType: claimTypeSchema.optional(),
   answers: z
     .array(
       z.object({

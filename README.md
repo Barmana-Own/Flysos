@@ -45,10 +45,22 @@ The backend JavaScript syntax check can be run with `node --check` for each file
 
 ## Passenger-rights document flow
 
-The supervisor uploads through the protected CMS media endpoint. New CMS files are stored under `UPLOAD_DIR/cms`; the settings API stores the URL in `AppSetting.rightsDocumentUrl` and exposes it as `passengerRightsUrl`. The public endpoint is `GET /api/legal-documents`, and public files are served only from the CMS path or through an allow-listed legacy CMS record.
+The supervisor uploads either downloadable legal document through the protected CMS media endpoint. New CMS files are stored under `UPLOAD_DIR/cms`; a recognized replacement updates the matching application setting in the same transaction and, after commit, removes the previous managed physical file when it is not shared by the other legal document. The previous `CmsMedia` metadata row and unrelated database data are preserved. The public endpoint is `GET /api/legal-documents`, and public files are served only from the CMS path or through an allow-listed legacy CMS record.
+
+## Claim questionnaire
+
+The stage-three claim questionnaire requires a boolean answer for every visible question in the selected cancellation or delay section. Conditional questions are required when their parent answer makes them visible. The server enforces the rule on both questionnaire save and final submission. Admin claim responses include the saved answers and their questionnaire section metadata. This behavior does not require a database migration.
+
+## Claim registration availability
+
+Ticket OCR runs after the upload response and extracted-field persistence uses a short guarded transaction. Claim submission returns the committed tracking state without waiting for OCR or registration SMS delivery; notification failures are isolated from the claim response. The MySQL pool uses bounded connection/idle settings and disposes of known-broken connections without retrying non-idempotent writes.
 
 Do not put real credentials in source control, `.env.example`, documentation, or browser assets. Use the migration and operations instructions in `docs/11-deployment.md` and `docs/11-operations-runbook.md` for release verification.
 
+## Admin claim deletion
+
+The existing admin delete action uses `DELETE /api/admin/claims/:id`. The endpoint is restricted to supervisor accounts, validates the identifier, removes claim-owned records transactionally, preserves the shared customer and cross-feature history links, and cleans claim files only within `UPLOAD_DIR` after a successful commit. No database migration is required.
+
 ## Flight feed refresh
 
-When the backend host cannot make outbound requests to the provider, run `backend/scripts/pushFlightsToFlySOS.mjs` on the provider-accessible server. Configure the same strong `FLIGHT_IMPORT_SECRET` in both environments, set `FLIGHT_CACHE_ENABLED=false` on FlySOS, and schedule the push script every five minutes. It sends the three flight feeds and provider count to `POST /api/flights/import` over HTTPS. The endpoint validates the secret and payload, returns `202`, and persists the data asynchronously. See `backend/PUSH-FLIGHTS-SETUP.txt` for the complete environment and cron configuration.
+The backend scheduler checks the configured flight provider every ten minutes (`FLIGHT_CACHE_INTERVAL_MS=600000`) when direct provider connectivity is available. If the backend host cannot reach the provider, run `backend/scripts/pushFlightsToFlySOS.mjs` on the provider-accessible server, set `FLIGHT_CACHE_ENABLED=false` on FlySOS, and schedule the push script every ten minutes. It sends the three flight feeds and provider count to `POST /api/flights/import` over HTTPS. The endpoint validates the secret and payload, returns `202`, and persists the data asynchronously. See `backend/PUSH-FLIGHTS-SETUP.txt` for the complete environment and cron configuration.

@@ -87,6 +87,25 @@ function parseInteger(value, fallback, min = 1, max = 10000) {
   return Math.min(parsed, max);
 }
 
+export function getFlightCacheSchedulerConfig() {
+  const defaultIntervalMs = parseInteger(
+    env.flightCacheIntervalMs,
+    DEFAULT_SYNC_INTERVAL_MS,
+    60_000,
+    24 * 60 * 60 * 1000,
+  );
+
+  return {
+    enabled: asBool(process.env.FLIGHT_CACHE_ENABLED, true),
+    intervalMs: parseInteger(
+      process.env.FLIGHT_CACHE_INTERVAL_MS,
+      defaultIntervalMs,
+      60_000,
+      24 * 60 * 60 * 1000,
+    ),
+  };
+}
+
 function parseJsonFeeds(value) {
   if (!value || !String(value).trim()) return [];
 
@@ -695,6 +714,7 @@ export async function importPushedFlightFeeds(payload = {}) {
 export async function getFlightPushStatus() {
   await ensureFlightCacheTables();
   const state = await getCachedSyncState();
+  const schedulerConfig = getFlightCacheSchedulerConfig();
 
   return {
     ok: true,
@@ -703,7 +723,8 @@ export async function getFlightPushStatus() {
       env.flightImportSecret &&
       env.flightImportSecret.length >= FLIGHT_IMPORT_SECRET_MIN_LENGTH
     ),
-    schedulerEnabled: asBool(process.env.FLIGHT_CACHE_ENABLED, true),
+    schedulerEnabled: schedulerConfig.enabled,
+    schedulerIntervalMs: schedulerConfig.intervalMs,
     syncInProgress,
     feeds: Object.fromEntries(PUSHED_FLIGHT_FEED_SOURCES.map((sourceName) => [
       sourceName,
@@ -771,7 +792,7 @@ export async function getFlightCacheSummary() {
     query('SELECT COUNT(*) AS total, MAX(fetchedAt) AS latestFetchedAt FROM ExternalFlightSnapshot'),
     query('SELECT statusType, COUNT(*) AS total FROM ExternalFlightSnapshot WHERE fetchedAt >= DATE_SUB(NOW(3), INTERVAL 12 HOUR) GROUP BY statusType'),
     query('SELECT sourceName, COUNT(*) AS total, MAX(fetchedAt) AS latestFetchedAt FROM ExternalFlightSnapshot GROUP BY sourceName ORDER BY latestFetchedAt DESC'),
-    query('SELECT * FROM ExternalFlightSnapshot ORDER BY fetchedAt DESC, scheduledTime ASC LIMIT 80'),
+    query('SELECT * FROM ExternalFlightSnapshot ORDER BY fetchedAt DESC, scheduledTime DESC, flightNumber DESC LIMIT 80'),
     query('SELECT * FROM FlightFeedRun ORDER BY startedAt DESC LIMIT 200'),
     query(`SELECT * FROM ExternalFlightCountSnapshot
            WHERE rawPayload IS NULL OR rawPayload NOT LIKE '%"error"%'
@@ -801,7 +822,7 @@ export async function getFlightCacheSummary() {
         [sourceName, latestFetchedAt],
       ),
       query(
-        'SELECT * FROM ExternalFlightSnapshot WHERE sourceName = ? AND fetchedAt >= DATE_SUB(?, INTERVAL 2 SECOND) ORDER BY scheduledTime ASC, flightNumber ASC LIMIT 12',
+        'SELECT * FROM ExternalFlightSnapshot WHERE sourceName = ? AND fetchedAt >= DATE_SUB(?, INTERVAL 2 SECOND) ORDER BY scheduledTime DESC, flightNumber DESC LIMIT 12',
         [sourceName, latestFetchedAt],
       ),
     ]);
@@ -909,17 +930,12 @@ export function startFlightCacheScheduler() {
 
   schedulerStarted = true;
 
-  if (!asBool(process.env.FLIGHT_CACHE_ENABLED, true)) {
+  const { enabled, intervalMs } = getFlightCacheSchedulerConfig();
+
+  if (!enabled) {
     console.log('[flight-cache] scheduler disabled by FLIGHT_CACHE_ENABLED=false');
     return;
   }
-
-  const intervalMs = parseInteger(
-    process.env.FLIGHT_CACHE_INTERVAL_MS,
-    env.flightCacheIntervalMs || DEFAULT_SYNC_INTERVAL_MS,
-    60_000,
-    24 * 60 * 60 * 1000,
-  );
 
   const run = () => {
     syncFlightFeeds({ limit: env.externalFlightsLimit })

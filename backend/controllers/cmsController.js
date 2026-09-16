@@ -11,10 +11,32 @@ import {
   isSupportedUploadMetadata,
   normalizeStoredMimeType,
 } from '../utils/fileValidation.js';
+import {
+  removeManagedUploadFile,
+  resolveLegalDocumentDefinition,
+  resolveManagedUploadPath,
+} from '../services/legalDocumentReplacementService.js';
+import {
+  normalizeRightsBlocks,
+  normalizeRightsSeo,
+  normalizeRightsTitle,
+} from '../services/rightsPageContentService.js';
+import {
+  normalizeAboutBlocks,
+  normalizeAboutSeo,
+  normalizeAboutTitle,
+} from '../services/aboutPageContentService.js';
+import {
+  normalizeTermsBlocks,
+  normalizeTermsSeo,
+  normalizeTermsTitle,
+} from '../services/termsPageContentService.js';
+import { normalizeTrackBlocks } from '../services/claimReceiptContentService.js';
+import { normalizeLegalDocumentUrls } from '../utils/legalDocument.js';
 
 const MAX_BLOCKS = 250;
 const MAX_DEPTH = 6;
-const PROTECTED_SLUGS = new Set(['home', 'about', 'faq', 'rules']);
+const PROTECTED_SLUGS = new Set(['home', 'about', 'faq', 'terms', 'rules']);
 const SUPPORTED_BLOCKS = new Set([
   'hero', 'banner', 'title', 'heading', 'paragraph', 'rich-text', 'image', 'gallery',
   'video', 'button', 'features', 'services', 'pricing', 'team', 'testimonials',
@@ -33,6 +55,10 @@ const STYLE_KEYS = new Set([
 ]);
 const URL_KEYS = new Set(['url', 'image', 'src', 'href', 'link', 'primaryUrl', 'secondaryUrl', 'canonical', 'openGraphImage']);
 
+function canonicalPublicPageSlug(slug) {
+  return slug === 'rules' ? 'terms' : slug;
+}
+
 function resolveStoredUploadPath(filename) {
   const uploadRoot = path.resolve(process.cwd(), env.uploadDir);
   const candidate = path.resolve(uploadRoot, String(filename || ''));
@@ -49,7 +75,53 @@ function toPublicUploadUrl(filename) {
     .map((segment) => encodeURIComponent(segment))
     .join('/');
 
-  return `/uploads/${relative}`;
+  return `/api/uploads/${relative}`;
+}
+
+function canonicalPublicUploadUrl(value) {
+  return String(value ?? '').trim().replace(/^\/api(?=\/uploads\/)/u, '');
+}
+
+function readLegalDocumentUrl(settings, settingColumn) {
+  const documents = normalizeLegalDocumentUrls(settings);
+  return settingColumn === 'rightsDocumentUrl'
+    ? documents.passengerRightsUrl
+    : documents.powerOfAttorneyUrl;
+}
+
+function getAvailableLegalSettingColumn(settings, definition) {
+  if (!settings) return null;
+  if (Object.prototype.hasOwnProperty.call(settings, definition.settingColumn)) {
+    return definition.settingColumn;
+  }
+  return Object.prototype.hasOwnProperty.call(settings, definition.legacySettingColumn)
+    ? definition.legacySettingColumn
+    : null;
+}
+
+async function cleanupReplacedLegalDocument({
+  previousUrl,
+  nextUrl,
+  previousMedia,
+  otherDocumentUrls,
+}) {
+  const previous = canonicalPublicUploadUrl(previousUrl);
+  const next = canonicalPublicUploadUrl(nextUrl);
+  if (!previous || previous === next || !previousMedia) return;
+  if (canonicalPublicUploadUrl(previousMedia.url) !== previous) return;
+  if (otherDocumentUrls.some((value) => canonicalPublicUploadUrl(value) === previous)) return;
+
+  const uploadDirectory = path.resolve(process.cwd(), env.uploadDir);
+  const filePath = resolveManagedUploadPath(previousMedia.url, uploadDirectory);
+  if (!filePath) return;
+
+  try {
+    await removeManagedUploadFile(filePath, uploadDirectory);
+  } catch (error) {
+    // The database now points at the replacement. A cleanup failure must not
+    // turn a successful replacement into a misleading client error.
+    console.error(`[CMS] legal document cleanup failed for media ${previousMedia.id}: ${error?.code || 'unknown'}`);
+  }
 }
 
 async function hasPdfFileSignature(filePath) {
@@ -221,16 +293,66 @@ function draftBlocksFrom(row, strict = false) {
   return Array.isArray(draft) ? draft : Array.isArray(legacy) ? legacy : [];
 }
 
+function normalizeAdminPageContent(row, {
+  draftBlocks,
+  publishedBlocks,
+  draftSeo,
+  publishedSeo,
+}) {
+  if (!['rights', 'about'].includes(row.slug) && !['terms', 'rules'].includes(row.slug) && row.slug !== 'track') return {
+    title: row.title,
+    draftBlocks,
+    publishedBlocks,
+    draftSeo,
+    publishedSeo,
+  };
+
+  const hasPublishedBlocks = Array.isArray(publishedBlocks) && publishedBlocks.length > 0;
+  const normalizeBlocks = row.slug === 'rights'
+    ? normalizeRightsBlocks
+    : row.slug === 'about'
+      ? normalizeAboutBlocks
+      : row.slug === 'track'
+        ? normalizeTrackBlocks
+        : normalizeTermsBlocks;
+  const normalizeSeo = row.slug === 'rights'
+    ? normalizeRightsSeo
+    : row.slug === 'about'
+      ? normalizeAboutSeo
+      : ['terms', 'rules'].includes(row.slug)
+        ? normalizeTermsSeo
+        : (value) => value;
+  const normalizeTitle = row.slug === 'rights'
+    ? normalizeRightsTitle
+    : row.slug === 'about'
+      ? normalizeAboutTitle
+      : ['terms', 'rules'].includes(row.slug)
+        ? normalizeTermsTitle
+        : (value) => value;
+  return {
+    title: normalizeTitle(row.title),
+    draftBlocks: normalizeBlocks(draftBlocks, row.slug),
+    publishedBlocks: hasPublishedBlocks ? normalizeBlocks(publishedBlocks, row.slug) : publishedBlocks,
+    draftSeo: normalizeSeo(draftSeo),
+    publishedSeo: hasPublishedBlocks ? normalizeSeo(publishedSeo) : publishedSeo,
+  };
+}
+
 function mapAdminPage(row, includeBlocks = true) {
   const read = includeBlocks ? parseJsonStrict : parseJson;
-  const draftBlocks = draftBlocksFrom(row, includeBlocks);
+  let draftBlocks = draftBlocksFrom(row, includeBlocks);
   const legacyBlocks = read(row.blocks, [], 'blocks');
-  const publishedBlocks = read(row.publishedBlocks, row.status === 'published' ? legacyBlocks : [], 'publishedBlocks');
+  let publishedBlocks = read(row.publishedBlocks, row.status === 'published' ? legacyBlocks : [], 'publishedBlocks');
   const legacySeo = read(row.seo, {}, 'seo');
-  const draftSeo = read(row.draftSeo, legacySeo, 'draftSeo');
-  const publishedSeo = read(row.publishedSeo, row.status === 'published' ? legacySeo : {}, 'publishedSeo');
+  let draftSeo = read(row.draftSeo, legacySeo, 'draftSeo');
+  let publishedSeo = read(row.publishedSeo, row.status === 'published' ? legacySeo : {}, 'publishedSeo');
+  const normalized = normalizeAdminPageContent(row, { draftBlocks, publishedBlocks, draftSeo, publishedSeo });
+  draftBlocks = normalized.draftBlocks;
+  publishedBlocks = normalized.publishedBlocks;
+  draftSeo = normalized.draftSeo;
+  publishedSeo = normalized.publishedSeo;
   const result = {
-    id: row.id, title: row.title, slug: row.slug, status: row.status,
+    id: row.id, title: normalized.title, slug: row.slug, status: row.status,
     seo: draftSeo, draftSeo, publishedSeo,
     publishedAt: row.publishedAt, createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
@@ -284,14 +406,51 @@ export async function listCmsPages(_req, res) {
 export async function getCmsPage(req, res) { res.json(mapAdminPage(await findPage(req.params.id))); }
 
 export async function getPublishedCmsPage(req, res) {
-  const rows = await query('SELECT * FROM `CmsPage` WHERE `slug` = ? AND `status` = ? LIMIT 1', [cleanSlug(req.params.slug), 'published']);
+  const requestedSlug = cleanSlug(req.params.slug);
+  const slug = canonicalPublicPageSlug(requestedSlug);
+  if (['rights', 'about'].includes(slug) || slug === 'track' || ['terms', 'rules'].includes(requestedSlug)) {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+  }
+  const rows = await query('SELECT * FROM `CmsPage` WHERE `slug` = ? AND `status` = ? LIMIT 1', [slug, 'published']);
   if (!rows[0]) throw new AppError('Published page not found.', 404, 'PAGE_NOT_FOUND');
   const row = rows[0];
-  const blocks = parseJsonStrict(row.publishedBlocks, [], 'publishedBlocks');
+  const storedBlocks = parseJsonStrict(row.publishedBlocks, [], 'publishedBlocks');
+  const blocks = slug === 'rights'
+    ? normalizeRightsBlocks(storedBlocks, slug)
+    : slug === 'about'
+      ? normalizeAboutBlocks(storedBlocks, slug)
+      : slug === 'terms'
+        ? normalizeTermsBlocks(storedBlocks, slug)
+        : slug === 'track'
+          ? normalizeTrackBlocks(storedBlocks, slug)
+        : storedBlocks;
   if (!Array.isArray(blocks) || blocks.length === 0) throw new AppError('Published page has no content.', 404, 'PAGE_NOT_FOUND');
+  const storedSeo = parseJsonStrict(row.publishedSeo, {}, 'publishedSeo');
   res.json({
-    id: row.id, title: row.title, slug: row.slug, status: 'published', blocks,
-    seo: parseJsonStrict(row.publishedSeo, {}, 'publishedSeo'), publishedAt: row.publishedAt, updatedAt: row.updatedAt,
+    id: row.id,
+    title: slug === 'rights'
+      ? normalizeRightsTitle(row.title)
+      : slug === 'about'
+        ? normalizeAboutTitle(row.title)
+        : slug === 'terms'
+          ? normalizeTermsTitle(row.title)
+          : row.title,
+    slug: row.slug,
+    status: 'published',
+    blocks,
+    seo: slug === 'rights'
+      ? normalizeRightsSeo(storedSeo)
+      : slug === 'about'
+        ? normalizeAboutSeo(storedSeo)
+        : slug === 'terms'
+          ? normalizeTermsSeo(storedSeo)
+          : storedSeo,
+    publishedAt: row.publishedAt,
+    updatedAt: row.updatedAt,
   });
 }
 
@@ -338,7 +497,7 @@ export async function getPublishedCmsGlobalLayouts(_req, res) {
 export async function createCmsPage(req, res) {
   const id = randomUUID();
   const title = cleanText(req.body?.title, 'title', 191, true);
-  const slug = cleanSlug(req.body?.slug);
+  const slug = canonicalPublicPageSlug(cleanSlug(req.body?.slug));
   const draftBlocks = cleanBlockList(req.body?.draftBlocks ?? req.body?.blocks ?? []);
   const draftSeo = cleanSeo(req.body?.draftSeo ?? req.body?.seo);
   try {
@@ -356,10 +515,19 @@ export async function createCmsPage(req, res) {
 export async function updateCmsPage(req, res) {
   const existing = await findPage(req.params.id);
   const title = req.body?.title === undefined ? existing.title : cleanText(req.body.title, 'title', 191, true);
-  const slug = req.body?.slug === undefined ? existing.slug : cleanSlug(req.body.slug);
-  const draftBlocks = req.body?.draftBlocks === undefined && req.body?.blocks === undefined
+  const slug = req.body?.slug === undefined ? existing.slug : canonicalPublicPageSlug(cleanSlug(req.body.slug));
+  const incomingDraftBlocks = req.body?.draftBlocks === undefined && req.body?.blocks === undefined
     ? draftBlocksFrom(existing, true)
     : cleanBlockList(req.body?.draftBlocks ?? req.body?.blocks);
+  const draftBlocks = slug === 'rights'
+    ? normalizeRightsBlocks(incomingDraftBlocks, slug)
+    : slug === 'about'
+      ? normalizeAboutBlocks(incomingDraftBlocks, slug)
+      : slug === 'terms'
+        ? normalizeTermsBlocks(incomingDraftBlocks, slug)
+        : slug === 'track'
+          ? normalizeTrackBlocks(incomingDraftBlocks, slug)
+      : incomingDraftBlocks;
   const draftSeo = req.body?.draftSeo === undefined && req.body?.seo === undefined
     ? parseJsonStrict(existing.draftSeo, parseJsonStrict(existing.seo, {}, 'seo'), 'draftSeo')
     : cleanSeo(req.body?.draftSeo ?? req.body?.seo);
@@ -380,7 +548,16 @@ export async function updateCmsPage(req, res) {
 
 export async function publishCmsPage(req, res) {
   const existing = await findPage(req.params.id);
-  const draftBlocks = cleanBlockList(draftBlocksFrom(existing, true));
+  const incomingDraftBlocks = cleanBlockList(draftBlocksFrom(existing, true));
+  const draftBlocks = existing.slug === 'rights'
+    ? normalizeRightsBlocks(incomingDraftBlocks, existing.slug)
+    : existing.slug === 'about'
+      ? normalizeAboutBlocks(incomingDraftBlocks, existing.slug)
+      : ['terms', 'rules'].includes(existing.slug)
+        ? normalizeTermsBlocks(incomingDraftBlocks, existing.slug)
+      : existing.slug === 'track'
+        ? normalizeTrackBlocks(incomingDraftBlocks, existing.slug)
+      : incomingDraftBlocks;
   if (!draftBlocks.length) throw new AppError('An empty page cannot be published.', 400, 'EMPTY_PAGE');
   const draftSeo = cleanSeo(parseJsonStrict(existing.draftSeo, parseJsonStrict(existing.seo, {}, 'seo'), 'draftSeo'));
   await transaction(async (tx) => {
@@ -445,7 +622,7 @@ export async function listCmsMedia(req, res) {
 
 export async function uploadCmsMedia(req, res) {
   if (!req.file) throw new AppError('A media file is required.', 400, 'FILE_REQUIRED');
-  let persisted = false;
+  let committed = false;
 
   try {
     await validateUploadedCmsFile(req.file);
@@ -456,16 +633,79 @@ export async function uploadCmsMedia(req, res) {
     const url = toPublicUploadUrl(filename);
     const mimetype = normalizeStoredMimeType(req.file);
 
-    await query(
-      'INSERT INTO `CmsMedia` (`id`,`filename`,`originalName`,`mimetype`,`size`,`url`,`category`,`altText`,`title`,`description`,`uploadedByAdminId`) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      [id, filename, req.file.originalname, mimetype, req.file.size, url, cleanText(req.body?.category, 'category', 100), cleanText(req.body?.altText, 'altText', 300), cleanText(req.body?.title || req.file.originalname, 'title', 191), cleanText(req.body?.description, 'description', 2000), req.admin.id]
-    );
-    persisted = true;
+    const title = cleanText(req.body?.title || req.file.originalname, 'title', 191);
+    const isLegalDocumentUpload = req.body?.category === 'legal-document';
+    const hasDocumentKey = Boolean(String(req.body?.documentKey ?? '').trim());
+    const legalDocument = isLegalDocumentUpload || hasDocumentKey
+      ? resolveLegalDocumentDefinition({
+        documentKey: req.body?.documentKey,
+        title,
+      })
+      : null;
 
-    const rows = await query('SELECT * FROM `CmsMedia` WHERE `id`=?', [id]);
-    res.status(201).json(rows[0]);
+    if ((isLegalDocumentUpload || hasDocumentKey) && !legalDocument) {
+      throw new AppError('نوع سند قابل دانلود معتبر نیست.', 400, 'INVALID_LEGAL_DOCUMENT');
+    }
+
+    if (!legalDocument) {
+      await query(
+        'INSERT INTO `CmsMedia` (`id`,`filename`,`originalName`,`mimetype`,`size`,`url`,`category`,`altText`,`title`,`description`,`uploadedByAdminId`) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [id, filename, req.file.originalname, mimetype, req.file.size, url, cleanText(req.body?.category, 'category', 100), cleanText(req.body?.altText, 'altText', 300), title, cleanText(req.body?.description, 'description', 2000), req.admin.id]
+      );
+      committed = true;
+
+      const rows = await query('SELECT * FROM `CmsMedia` WHERE `id`=?', [id]);
+      res.status(201).json(rows[0]);
+      return;
+    }
+
+    const replacement = await transaction(async (tx) => {
+      const settingsRows = await tx.query('SELECT * FROM `AppSetting` WHERE `id` = "default" LIMIT 1 FOR UPDATE');
+      const currentSettings = settingsRows[0] || null;
+      const previousUrl = readLegalDocumentUrl(currentSettings, legalDocument.settingColumn);
+      const settingColumn = getAvailableLegalSettingColumn(currentSettings, legalDocument);
+      const previousMediaRows = previousUrl
+        ? await tx.query(
+          'SELECT `id`,`filename`,`url` FROM `CmsMedia` WHERE `url` IN (?,?) ORDER BY `createdAt` DESC LIMIT 1',
+          [previousUrl, canonicalPublicUploadUrl(previousUrl)],
+        )
+        : [];
+
+      await tx.query(
+        'INSERT INTO `CmsMedia` (`id`,`filename`,`originalName`,`mimetype`,`size`,`url`,`category`,`altText`,`title`,`description`,`uploadedByAdminId`) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [id, filename, req.file.originalname, mimetype, req.file.size, url, cleanText(req.body?.category, 'category', 100), cleanText(req.body?.altText, 'altText', 300), title, cleanText(req.body?.description, 'description', 2000), req.admin.id]
+      );
+
+      if (settingColumn) {
+        await tx.query(
+          `UPDATE \`AppSetting\` SET \`${settingColumn}\` = ? WHERE \`id\` = "default"`,
+          [url],
+        );
+      }
+
+      const rows = await tx.query('SELECT * FROM `CmsMedia` WHERE `id`=? LIMIT 1', [id]);
+      return {
+        media: rows[0],
+        previousUrl,
+        previousMedia: previousMediaRows[0] || null,
+        otherDocumentUrls: [
+          readLegalDocumentUrl(currentSettings, legalDocument.settingColumn === 'rightsDocumentUrl'
+            ? 'powerOfAttorneyUrl'
+            : 'rightsDocumentUrl'),
+        ],
+        settingsUpdated: Boolean(settingColumn),
+      };
+    });
+    committed = true;
+
+    if (replacement.settingsUpdated) await cleanupReplacedLegalDocument(replacement);
+    res.status(201).json({
+      ...replacement.media,
+      legalDocumentKey: legalDocument.key,
+      settingsUpdated: replacement.settingsUpdated,
+    });
   } catch (error) {
-    if (!persisted && req.file.path) await fs.unlink(req.file.path).catch(() => undefined);
+    if (!committed && req.file.path) await fs.unlink(req.file.path).catch(() => undefined);
     throw error;
   }
 }

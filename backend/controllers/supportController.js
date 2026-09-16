@@ -416,7 +416,11 @@ export async function addAdminSupportMessage(req, res) {
     const conciseReply = body.body.length > 220 ? `${body.body.slice(0, 217)}...` : body.body;
     await sendAutomaticSms(
       updatedTicket.customer.phoneNumber,
-      await getSmsTemplate('supportReply', { message: conciseReply })
+      await getSmsTemplate('supportReply', { message: conciseReply }),
+      {
+        claimId: updatedTicket.claim?.id || null,
+        adminId: req.admin.id,
+      }
     );
   }
 

@@ -2,6 +2,15 @@ function normalizeUrl(value) {
   return value === null || value === undefined ? '' : String(value).trim();
 }
 
+function toPublicDocumentUrl(value) {
+  const url = normalizeUrl(value);
+  return url.startsWith('/uploads/') ? `/api${url}` : url;
+}
+
+function normalizeGoftinoWidgetId(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
 function readStoredUrl(settings, primaryKey, legacyKey) {
   if (settings[primaryKey] !== null && settings[primaryKey] !== undefined) {
     return normalizeUrl(settings[primaryKey]);
@@ -52,14 +61,20 @@ export function resolveLegalDocumentUrls(body = {}, currentSettings = {}) {
   };
 }
 
-export function mapLegalDocumentResponse(settings = {}) {
+export function mapLegalDocumentResponse(settings = {}, fallbackWidgetId = '') {
   const documents = normalizeLegalDocumentUrls(settings);
+  const publicDocuments = {
+    powerOfAttorneyUrl: toPublicDocumentUrl(documents.powerOfAttorneyUrl),
+    passengerRightsUrl: toPublicDocumentUrl(documents.passengerRightsUrl),
+  };
+  const storedWidgetId = normalizeGoftinoWidgetId(settings.goftinoWidgetId);
 
   return {
-    ...documents,
+    ...publicDocuments,
     // Keep the names emitted by older browser bundles available while the
     // canonical API names remain passengerRightsUrl/powerOfAttorneyUrl.
-    rightsDocumentUrl: documents.passengerRightsUrl,
-    powerOfAttorneyDocumentUrl: documents.powerOfAttorneyUrl,
+    rightsDocumentUrl: publicDocuments.passengerRightsUrl,
+    powerOfAttorneyDocumentUrl: publicDocuments.powerOfAttorneyUrl,
+    goftinoWidgetId: storedWidgetId || normalizeGoftinoWidgetId(fallbackWidgetId),
   };
 }

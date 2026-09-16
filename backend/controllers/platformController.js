@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
 
 import { query, transaction } from '../config/db.js';
+import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import {
   createExpertSchema,
@@ -13,6 +14,7 @@ import {
 import { mapClaimForAdmin } from '../services/claimMapper.js';
 import { getFlightCacheSummary } from '../services/flightCacheService.js';
 import { isSmsConfigured, sendSms } from '../services/smsService.js';
+import { recordSmsLog } from '../services/smsLogService.js';
 import { ensureCustomerProfileColumns } from '../services/customerProfileService.js';
 import {
   DEFAULT_SMS_TEMPLATES,
@@ -25,6 +27,10 @@ import {
   getAdminAccessLevels,
   parseAdminAccessLevels,
 } from '../services/adminPermissionService.js';
+import {
+  buildTeamPerformance,
+  TEAM_PERFORMANCE_ROLES,
+} from '../services/teamPerformanceService.js';
 import {
   mapLegalDocumentResponse,
   resolveLegalDocumentUrls,
@@ -148,6 +154,22 @@ function mapNotification(notification) {
 }
 
 let legalDocumentColumnsReady;
+let goftinoWidgetColumnReady;
+
+async function hasGoftinoWidgetColumn() {
+  if (goftinoWidgetColumnReady !== undefined) return goftinoWidgetColumnReady;
+
+  try {
+    const rows = await query(
+      'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "AppSetting" AND COLUMN_NAME = "goftinoWidgetId"'
+    );
+    goftinoWidgetColumnReady = rows.some((row) => row.COLUMN_NAME === 'goftinoWidgetId');
+    return goftinoWidgetColumnReady;
+  } catch (error) {
+    goftinoWidgetColumnReady = undefined;
+    throw error;
+  }
+}
 
 async function ensureLegalDocumentColumns() {
   if (!legalDocumentColumnsReady) {
@@ -260,6 +282,23 @@ async function loadFullClaim(claimId, tx = null) {
     createdAt: sh.createdAt ? new Date(sh.createdAt) : new Date(),
   }));
 
+  // Keep dashboard claim data consistent with the claim detail endpoint.
+  let smsLogs = [];
+  try {
+    smsLogs = await runner.query(
+      'SELECT id, direction, channel, recipient, body, status, providerMessageId, createdAt FROM MessageLog WHERE claimId = ? ORDER BY createdAt DESC',
+      [claimId]
+    );
+  } catch (error) {
+    if (!['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error?.code)) {
+      throw error;
+    }
+  }
+  claim.smsLogs = smsLogs.map(log => ({
+    ...log,
+    createdAt: log.createdAt ? new Date(log.createdAt) : new Date(),
+  }));
+
   const notes = await runner.query(
     'SELECT cn.*, au.id as authorId, au.username, au.name as authorName FROM ClaimNote cn LEFT JOIN AdminUser au ON cn.authorAdminId = au.id WHERE cn.claimId = ? ORDER BY cn.createdAt DESC',
     [claimId]
@@ -326,6 +365,32 @@ export async function dashboard(req, res) {
     unreadNotifications: unreadNotificationsRes[0]?.total || 0,
     flightCache: flightCacheSummary,
   });
+}
+
+export async function getTeamPerformanceReport(_req, res) {
+  const rolePlaceholders = TEAM_PERFORMANCE_ROLES.map(() => '?').join(', ');
+  const [admins, claims, statusHistory] = await Promise.all([
+    query(
+      'SELECT id, username, name, role ' +
+      'FROM AdminUser ' +
+      'WHERE role IN (' + rolePlaceholders + ') ' +
+      'ORDER BY createdAt DESC',
+      TEAM_PERFORMANCE_ROLES,
+    ),
+    query(
+      'SELECT id, assignedAdminId, status, createdAt, updatedAt ' +
+      'FROM Claim WHERE assignedAdminId IS NOT NULL',
+    ),
+    query(
+      'SELECT history.claimId, history.toStatus, history.createdAt ' +
+      'FROM ClaimStatusHistory history ' +
+      'INNER JOIN Claim claim ON claim.id = history.claimId ' +
+      'WHERE history.toStatus = ? AND claim.assignedAdminId IS NOT NULL',
+      ['closed'],
+    ),
+  ]);
+
+  res.json(buildTeamPerformance({ admins, claims, statusHistory }));
 }
 
 export async function listUsers(_req, res) {
@@ -628,7 +693,7 @@ export async function getSettings(_req, res) {
     autoSms: Boolean(settings.autoSms),
     maintenanceMode: Boolean(settings.maintenanceMode),
     requireNationalId: Boolean(settings.requireNationalId),
-    ...mapLegalDocumentResponse(settings),
+    ...mapLegalDocumentResponse(settings, env.goftinoWidgetId),
     smsTemplates,
     smsConfigured: isSmsConfigured(),
   });
@@ -636,25 +701,69 @@ export async function getSettings(_req, res) {
 
 export async function getPublicLegalDocuments(_req, res) {
   const settings = await getDefaultSettings();
-  res.json(mapLegalDocumentResponse(settings));
+  res.json(mapLegalDocumentResponse(settings, env.goftinoWidgetId));
 }
 
 export async function sendUserSms(req, res) {
   const body = parseOrThrow(sendDirectSmsSchema, req.body);
   const customers = await query('SELECT id, phoneNumber FROM Customer WHERE id = ? LIMIT 1', [req.params.id]);
   if (!customers.length) throw new AppError('Customer not found.', 404, 'CUSTOMER_NOT_FOUND');
+
+  if (body.claimId) {
+    const relatedClaims = await query(
+      'SELECT id FROM Claim WHERE id = ? AND customerId = ? LIMIT 1',
+      [body.claimId, req.params.id]
+    );
+    if (!relatedClaims.length) {
+      throw new AppError(
+        'پرونده انتخاب‌شده متعلق به این کاربر نیست.',
+        400,
+        'CLAIM_CUSTOMER_MISMATCH'
+      );
+    }
+  }
+
   const result = await sendSms(customers[0].phoneNumber, body.message);
+  await recordSmsLog({
+    claimId: body.claimId || null,
+    adminId: req.admin.id,
+    recipient: customers[0].phoneNumber,
+    message: body.message,
+    result,
+  });
   if (!result.ok) {
     const gatewayMessages = {
+      SMS_RECIPIENT_MESSAGE_COUNT_MISMATCH: 'تعداد متن‌های پیامک با تعداد گیرندگان همخوانی ندارد.',
       SMS_NOT_CONFIGURED: 'توکن یا شماره خط ارسال‌کننده پیامک تنظیم نشده است.',
       INVALID_PHONE_NUMBER: 'شماره موبایل گیرنده معتبر نیست.',
+      SMS_RECIPIENTS_EMPTY: 'شماره گیرنده پیامک خالی است.',
+      SMS_ORGANIZATION_UNAVAILABLE: 'سازمان پیامکی غیرفعال، منقضی یا احرازنشده است.',
+      SMS_ORGANIZATION_INACTIVE: 'سازمان پیامکی غیرفعال است.',
+      SMS_ORGANIZATION_EXPIRED: 'اعتبار سازمان پیامکی منقضی شده است.',
+      SMS_ORGANIZATION_HIERARCHY_INACTIVE: 'یکی از سازمان‌های مرتبط با حساب پیامکی غیرفعال یا احرازنشده است.',
+      SMS_SEND_TIME_NOT_ALLOWED: 'ارسال پیامک در ساعت مجاز این حساب امکان‌پذیر نیست.',
+      SMS_USER_SEND_DISABLED: 'دسترسی ارسال پیامک برای کاربر درگاه غیرفعال است.',
+      SMS_USER_EXPIRED: 'اعتبار کاربر درگاه پیامک منقضی شده است.',
+      SMS_USER_UNAVAILABLE: 'کاربر یا دسترسی ارسال پیامک درگاه یافت نشد.',
+      SMS_PARENT_ORGANIZATION_EXPIRED: 'اعتبار سازمان والد پیامکی منقضی شده است.',
       SMS_IP_NOT_ALLOWED: 'IP خروجی سرور در بخش «کاربران ← آی‌پی‌های امن» پنل پیشگام رایان مجاز نشده است.',
       SMS_TOKEN_MISSING: 'توکن پیامک به درگاه ارسال نشده است.',
       SMS_TOKEN_INVALID: 'توکن پیامک نامعتبر یا هنوز تأییدنشده است.',
       SMS_SENDER_INVALID: 'شماره خط ارسال‌کننده نامعتبر یا غیرفعال است.',
+      SMS_SENDER_INACTIVE: 'خط ارسال‌کننده پیامک غیرفعال است.',
+      SMS_SENDER_EXPIRED: 'اعتبار خط ارسال‌کننده پیامک منقضی شده است.',
+      SMS_PROVIDER_OUT_OF_SERVICE: 'سامانه ارسال پیامک موقتاً خارج از سرویس است.',
+      SMS_QUEUE_INSERT_FAILED: 'ثبت پیامک در صف ارسال درگاه انجام نشد.',
       SMS_RECIPIENT_BLACKLISTED: 'شماره گیرنده در فهرست سیاه پیامکی است.',
+      SMS_RECIPIENT_COUNT_INVALID: 'تعداد گیرندگان پیامک معتبر نیست.',
+      SMS_PROVIDER_FAILED: 'درگاه پیامک ارسال را ناموفق اعلام کرد.',
+      SMS_RECIPIENT_LIMIT_EXCEEDED: 'تعداد گیرندگان پیامک از حد مجاز بیشتر است.',
       SMS_PERMISSION_DENIED: 'دسترسی ارسال پیامک برای این توکن در پنل پیشگام رایان فعال نیست.',
       SMS_CREDIT_INSUFFICIENT: 'اعتبار پنل پیامک برای ارسال کافی نیست.',
+      SMS_SEND_DATE_INVALID: 'تاریخ یا زمان ارسال پیامک معتبر نیست.',
+      SMS_CREDIT_DEDUCTION_FAILED: 'کسر هزینه پیامک از اعتبار درگاه انجام نشد.',
+      SMS_SENDER_TYPE_INVALID: 'نوع خط یا عامل ارسال‌کننده پیامک معتبر نیست.',
+      SMS_AGENT_SEND_TIME_NOT_ALLOWED: 'ارسال پیامک در ساعت مجاز خط ارسال‌کننده امکان‌پذیر نیست.',
       SMS_FILTERED_CONTENT: 'متن پیامک توسط سامانه پالایش مسدود شده است.',
       SMS_LINK_NOT_ALLOWED: 'ارسال لینک در متن پیامک برای این خط مجاز نیست.',
       SMS_EMPTY_MESSAGE: 'متن پیامک خالی است.',
@@ -681,9 +790,24 @@ export async function updateSettings(req, res) {
   const body = parseOrThrow(updateSettingsSchema, req.body);
   await ensureLegalDocumentColumns();
   const smsColumnReady = await ensureSmsTemplateColumn();
+  const hasWidgetUpdate = Object.prototype.hasOwnProperty.call(body, 'goftinoWidgetId');
+  const goftinoWidgetColumnReady = hasWidgetUpdate
+    ? await hasGoftinoWidgetColumn()
+    : false;
+
+  if (hasWidgetUpdate && !goftinoWidgetColumnReady) {
+    throw new AppError(
+      'ذخیره شناسه ویجت گفتینو در ساختار فعلی تنظیمات در دسترس نیست.',
+      503,
+      'GOFTINO_WIDGET_STORAGE_UNAVAILABLE'
+    );
+  }
 
   const settingsList = await query('SELECT * FROM AppSetting WHERE id = "default" LIMIT 1');
   const current = settingsList[0] || {};
+  const goftinoWidgetId = hasWidgetUpdate
+    ? body.goftinoWidgetId
+    : current.goftinoWidgetId ?? null;
   const legalDocuments = resolveLegalDocumentUrls(body, current);
   const currentSmsTemplates = normalizeSmsTemplates(current.smsTemplates);
   const smsTemplates = normalizeSmsTemplates({
@@ -692,7 +816,23 @@ export async function updateSettings(req, res) {
   });
 
   if (settingsList.length > 0) {
-    if (smsColumnReady) {
+    if (smsColumnReady && goftinoWidgetColumnReady) {
+      await query(
+        'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ?, rightsDocumentUrl = ?, smsTemplates = ?, goftinoWidgetId = ? WHERE id = "default"',
+        [
+          body.siteName ?? current.siteName ?? 'سامانه حقوقی فلای‌سوس',
+          body.smsGateway ?? current.smsGateway ?? '',
+          body.defaultCommission ?? current.defaultCommission ?? 20,
+          body.autoSms ?? Boolean(current.autoSms ?? true),
+          body.maintenanceMode ?? Boolean(current.maintenanceMode ?? false),
+          body.requireNationalId ?? Boolean(current.requireNationalId ?? true),
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
+          JSON.stringify(smsTemplates),
+          goftinoWidgetId,
+        ]
+      );
+    } else if (smsColumnReady) {
       await query(
         'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ?, rightsDocumentUrl = ?, smsTemplates = ? WHERE id = "default"',
         [
@@ -705,6 +845,21 @@ export async function updateSettings(req, res) {
           legalDocuments.powerOfAttorneyUrl,
           legalDocuments.passengerRightsUrl,
           JSON.stringify(smsTemplates),
+        ]
+      );
+    } else if (goftinoWidgetColumnReady) {
+      await query(
+        'UPDATE AppSetting SET siteName = ?, smsGateway = ?, defaultCommission = ?, autoSms = ?, maintenanceMode = ?, requireNationalId = ?, powerOfAttorneyUrl = ?, rightsDocumentUrl = ?, goftinoWidgetId = ? WHERE id = "default"',
+        [
+          body.siteName ?? current.siteName ?? 'سامانه حقوقی فلای‌سوس',
+          body.smsGateway ?? current.smsGateway ?? '',
+          body.defaultCommission ?? current.defaultCommission ?? 20,
+          body.autoSms ?? Boolean(current.autoSms ?? true),
+          body.maintenanceMode ?? Boolean(current.maintenanceMode ?? false),
+          body.requireNationalId ?? Boolean(current.requireNationalId ?? true),
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
+          goftinoWidgetId,
         ]
       );
     } else {
@@ -723,7 +878,23 @@ export async function updateSettings(req, res) {
       );
     }
   } else {
-    if (smsColumnReady) {
+    if (smsColumnReady && goftinoWidgetColumnReady) {
+      await query(
+        'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl, rightsDocumentUrl, smsTemplates, goftinoWidgetId) VALUES ("default", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          body.siteName || 'سامانه حقوقی فلای‌سوس',
+          body.smsGateway || 'پیشگام رایان',
+          body.defaultCommission ?? 20,
+          body.autoSms ?? true,
+          body.maintenanceMode ?? false,
+          body.requireNationalId ?? true,
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
+          JSON.stringify(smsTemplates),
+          goftinoWidgetId,
+        ]
+      );
+    } else if (smsColumnReady) {
       await query(
         'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl, rightsDocumentUrl, smsTemplates) VALUES ("default", ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
@@ -736,6 +907,21 @@ export async function updateSettings(req, res) {
           legalDocuments.powerOfAttorneyUrl,
           legalDocuments.passengerRightsUrl,
           JSON.stringify(smsTemplates),
+        ]
+      );
+    } else if (goftinoWidgetColumnReady) {
+      await query(
+        'INSERT INTO AppSetting (id, siteName, smsGateway, defaultCommission, autoSms, maintenanceMode, requireNationalId, powerOfAttorneyUrl, rightsDocumentUrl, goftinoWidgetId) VALUES ("default", ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          body.siteName || 'سامانه حقوقی فلای‌سوس',
+          body.smsGateway || 'پیشگام رایان',
+          body.defaultCommission ?? 20,
+          body.autoSms ?? true,
+          body.maintenanceMode ?? false,
+          body.requireNationalId ?? true,
+          legalDocuments.powerOfAttorneyUrl,
+          legalDocuments.passengerRightsUrl,
+          goftinoWidgetId,
         ]
       );
     } else {
@@ -765,7 +951,7 @@ export async function updateSettings(req, res) {
     autoSms: Boolean(updatedSettings.autoSms),
     maintenanceMode: Boolean(updatedSettings.maintenanceMode),
     requireNationalId: Boolean(updatedSettings.requireNationalId),
-    ...mapLegalDocumentResponse(updatedSettings),
+    ...mapLegalDocumentResponse(updatedSettings, env.goftinoWidgetId),
     smsTemplates: updatedSmsTemplates,
     smsConfigured: isSmsConfigured(),
   });

@@ -150,6 +150,32 @@ test('legal document mappings bridge legacy and canonical storage names', async 
   );
 });
 
+test('public legal document URLs use the API delivery path without rewriting stored values', async () => {
+  const {
+    mapLegalDocumentResponse,
+    normalizeLegalDocumentUrls,
+  } = await import('../backend/utils/legalDocument.js');
+
+  assert.deepEqual(
+    mapLegalDocumentResponse({
+      powerOfAttorneyUrl: '/uploads/legacy-power.pdf',
+      rightsDocumentUrl: '/api/uploads/cms/current-rights.pdf',
+    }),
+    {
+      powerOfAttorneyUrl: '/api/uploads/legacy-power.pdf',
+      passengerRightsUrl: '/api/uploads/cms/current-rights.pdf',
+      rightsDocumentUrl: '/api/uploads/cms/current-rights.pdf',
+      powerOfAttorneyDocumentUrl: '/api/uploads/legacy-power.pdf',
+      goftinoWidgetId: '',
+    },
+  );
+
+  assert.deepEqual(
+    normalizeLegalDocumentUrls({ powerOfAttorneyUrl: '/uploads/legacy-power.pdf' }),
+    { powerOfAttorneyUrl: '/uploads/legacy-power.pdf', passengerRightsUrl: '' },
+  );
+});
+
 test('public upload serving is scoped to CMS media', () => {
   const source = read('backend/app.js');
   const cmsController = read('backend/controllers/cmsController.js');

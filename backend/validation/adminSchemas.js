@@ -13,11 +13,14 @@ const optionalAdminId = z
   .union([z.string().trim().min(1), z.literal(''), z.null()])
   .optional();
 
+const claimPrioritySchema = z.enum(['low', 'medium', 'high', 'urgent']);
+
 export const updateClaimSchema = z.object({
   status: claimStatusSchema.optional(),
   statusNote: z.string().trim().max(1000).optional(),
 
-  stage: z.coerce.number().int().min(1).max(7).optional(),
+  stage: z.coerce.number().int().min(1).max(8).optional(),
+  priority: claimPrioritySchema.optional(),
   assignedAdminId: optionalAdminId,
 
   extractedTicketData: z
@@ -43,6 +46,7 @@ export const updateClaimSchema = z.object({
     flightNumber: optionalText(80),
     flightDate: optionalText(80),
     scheduledTime: optionalText(80),
+    ticketIssueDate: optionalText(100),
     origin: optionalText(150),
     destination: optionalText(150),
     route: optionalText(300),

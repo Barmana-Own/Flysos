@@ -25,6 +25,12 @@ const typeLabels = {
   delay: 'تاخیر پرواز',
 };
 
+const questionnaireSectionLabels = {
+  cancellation: 'لغو / ابطال پرواز',
+  delay: 'تاخیر پرواز',
+  referral: 'نحوه آشنایی با ما',
+};
+
 const referralSourceLabels = {
   friends: 'معرفی دوستان و آشنایان',
   sms: 'تبلیغات پیامکی',
@@ -69,6 +75,11 @@ export const publicStageTimeline = [
     stage: 7,
     title: 'واریز خسارت و مختومه',
     description: 'بررسی مالی، واریز سهم مسافر و مختومه‌شدن پرونده',
+  },
+  {
+    stage: 8,
+    title: 'رد شده',
+    description: 'پرونده پس از بررسی کارشناسی رد شده است',
   },
 ];
 
@@ -138,6 +149,33 @@ function sortQuestionnaire(questionnaire) {
   );
 }
 
+function getQuestionnaireSection(answer, fallbackSection) {
+  const questionId = String(answer?.questionId || '');
+
+  if (/^c\d+$/u.test(questionId)) return 'cancellation';
+  if (/^d\d+$/u.test(questionId)) return 'delay';
+  if (questionId.startsWith('referral_')) return 'referral';
+
+  return fallbackSection || 'other';
+}
+
+function mapQuestionnaireAnswer(answer, fallbackSection) {
+  const section = getQuestionnaireSection(answer, fallbackSection);
+
+  return {
+    ...answer,
+    answer: answer?.answer === null ? null : Boolean(answer?.answer),
+    section,
+    sectionLabel: questionnaireSectionLabels[section] || 'سایر',
+  };
+}
+
+function mapQuestionnaire(questionnaire, fallbackSection) {
+  return sortQuestionnaire(
+    (questionnaire || []).map((answer) => mapQuestionnaireAnswer(answer, fallbackSection)),
+  );
+}
+
 function mapReferralSources(questionnaire) {
   const sourceIds = new Set();
 
@@ -157,17 +195,22 @@ function mapReferralSources(questionnaire) {
   }));
 }
 
-function mapCaseQuestionnaire(questionnaire) {
-  return sortQuestionnaire(
+function mapCaseQuestionnaire(questionnaire, section) {
+  return mapQuestionnaire(
     (questionnaire || []).filter(
-      (answer) => !String(answer?.questionId || '').startsWith('referral_'),
+      (answer) => getQuestionnaireSection(answer, section) === section,
     ),
+    section,
   );
 }
 
 export function mapClaimForPublic(claim) {
-  const stage = normalizeStage(claim.stage);
-  const currentStage = publicStageTimeline.find((item) => item.stage === stage) || publicStageTimeline[0];
+  const isRejected = claim.status === 'rejected';
+  const stage = isRejected ? 8 : Math.min(normalizeStage(claim.stage), 7);
+  const stageTimeline = isRejected
+    ? publicStageTimeline
+    : publicStageTimeline.filter((item) => item.stage !== 8);
+  const currentStage = stageTimeline.find((item) => item.stage === stage) || stageTimeline[0];
 
   return {
     trackingCode: claim.trackingCode,
@@ -175,7 +218,7 @@ export function mapClaimForPublic(claim) {
     statusText: statusLabels[claim.status] || claim.status,
     stage,
     currentStage,
-    stageTimeline: publicStageTimeline,
+    stageTimeline,
     updatedAt: claim.updatedAt,
   };
 }
@@ -195,8 +238,13 @@ export function mapClaimForAdmin(claim) {
 
   const extractedTicketData = parseExtractedData(claim.extractedTicketData);
   const destination =
-    extractedTicketData?.destination ||
-    claim.flightInfo?.destination ||
+    claim.flightInfo?.destination ??
+    extractedTicketData?.destination ??
+    '';
+  const ticketIssueDate =
+    claim.flightInfo?.ticketIssueDate ??
+    extractedTicketData?.issueDate ??
+    extractedTicketData?.ticketIssueDate ??
     '';
 
   return {
@@ -226,7 +274,8 @@ export function mapClaimForAdmin(claim) {
     status: claim.status,
     statusText: statusLabels[claim.status] || claim.status,
 
-    stage: claim.stage || 1,
+    priority: claim.priority || 'medium',
+    stage: claim.status === 'rejected' ? 8 : claim.stage || 1,
 
     expert,
     assignedAdminId: claim.assignedAdminId || null,
@@ -238,7 +287,7 @@ export function mapClaimForAdmin(claim) {
     flightClass: claim.flightInfo?.flightClass || '',
     pnrCode: claim.flightInfo?.pnrCode || '',
     ticketNumber: claim.flightInfo?.ticketNumber || '',
-    ticketIssueDate: extractedTicketData?.issueDate || extractedTicketData?.ticketIssueDate || '',
+    ticketIssueDate,
     ticketAmount: claim.flightInfo?.ticketAmount || '',
     origin: claim.flightInfo?.origin || '',
     destination,
@@ -254,19 +303,31 @@ export function mapClaimForAdmin(claim) {
 
     referralSources: mapReferralSources(claim.questionnaire),
 
+    questionnaireAnswers: mapQuestionnaire(claim.questionnaire, claim.claimType),
+
     files: (claim.files || []).map(mapFile),
 
     delayAnswers:
       claim.claimType === 'delay'
-        ? mapCaseQuestionnaire(claim.questionnaire)
+        ? mapCaseQuestionnaire(claim.questionnaire, 'delay')
         : [],
 
     cancellationAnswers:
       claim.claimType === 'cancellation'
-        ? mapCaseQuestionnaire(claim.questionnaire)
+        ? mapCaseQuestionnaire(claim.questionnaire, 'cancellation')
         : [],
 
     statusHistory: claim.statusHistory || [],
+    smsLogs: (claim.smsLogs || []).map((log) => ({
+      id: log.id,
+      direction: log.direction || 'outbound',
+      channel: log.channel || 'sms',
+      recipient: log.recipient || '',
+      message: log.message || log.body || '',
+      status: log.status || 'queued',
+      providerMessageId: log.providerMessageId || null,
+      createdAt: log.createdAt,
+    })),
     notes: (claim.notes || []).map(mapNote),
   };
 }

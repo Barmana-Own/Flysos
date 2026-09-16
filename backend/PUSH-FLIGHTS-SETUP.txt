@@ -9,6 +9,7 @@
 1) در فایل .env بک‌اند FlySOS یک کلید بلند قرار دهید:
 FLIGHT_IMPORT_SECRET=یک-رشته-تصادفی-حداقل-۴۸-کاراکتری
 FLIGHT_CACHE_ENABLED=false
+FLIGHT_CACHE_INTERVAL_MS=600000
 
 مسیر دریافت داده در بک‌اند به صورت POST /api/flights/import فعال است و فقط
 در صورت ارسال همین کلید در هدر X-FlySOS-Import-Key درخواست را می‌پذیرد.
@@ -25,8 +26,8 @@ export FLYSOS_IMPORT_URL="https://flysos.ir/api/flights/import"
 export FLIGHT_IMPORT_SECRET="همان کلید مرحله 1"
 node /path/to/pushFlightsToFlySOS.mjs
 
-5) اگر پیام import successful دیدید، Cron هر 5 دقیقه اضافه کنید:
-*/5 * * * * /usr/bin/env SOURCE_FLIGHTS_BASE_URL="http://127.0.0.1:3000/api/flights" SOURCE_FLIGHTS_USERNAME="..." SOURCE_FLIGHTS_PASSWORD="..." FLYSOS_IMPORT_URL="https://flysos.ir/api/flights/import" FLIGHT_IMPORT_SECRET="..." /usr/bin/node /path/to/pushFlightsToFlySOS.mjs >> /var/log/flysos-flight-push.log 2>&1
+5) اگر پیام import successful دیدید، Cron هر 10 دقیقه اضافه کنید:
+*/10 * * * * /usr/bin/env SOURCE_FLIGHTS_BASE_URL="http://127.0.0.1:3000/api/flights" SOURCE_FLIGHTS_USERNAME="..." SOURCE_FLIGHTS_PASSWORD="..." FLYSOS_IMPORT_URL="https://flysos.ir/api/flights/import" FLIGHT_IMPORT_SECRET="..." /usr/bin/node /path/to/pushFlightsToFlySOS.mjs >> /var/log/flysos-flight-push.log 2>&1
 
 تست روی هاست FlySOS:
 curl -sS https://flysos.ir/api/flights/status?limit=3

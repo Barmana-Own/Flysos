@@ -9,6 +9,7 @@ import {
   adminFlightCacheSummary,
   adminLogin,
   adminSyncFlightCache,
+  deleteClaim,
   downloadClaimFile,
   getClaim,
   listClaims,
@@ -24,6 +25,7 @@ import {
   dashboard,
   deleteExpert,
   getSettings,
+  getTeamPerformanceReport,
   listExperts,
   listNotifications,
   listUsers,
@@ -84,6 +86,11 @@ adminRoutes.patch('/users/:id', requirePassengerManager, asyncHandler(updateUser
 adminRoutes.post('/users/:id/sms', requirePassengerManager, asyncHandler(sendUserSms));
 
 adminRoutes.get('/experts', requireSupervisor, asyncHandler(listExperts));
+adminRoutes.get(
+  '/reports/team-performance',
+  requireSupervisor,
+  asyncHandler(getTeamPerformanceReport),
+);
 adminRoutes.post('/experts', requireSupervisor, asyncHandler(createExpert));
 adminRoutes.patch('/experts/:id', requireSupervisor, asyncHandler(updateExpert));
 adminRoutes.delete('/experts/:id', requireSupervisor, asyncHandler(deleteExpert));
@@ -107,6 +114,11 @@ adminRoutes.get('/files/:fileId/download', asyncHandler(downloadClaimFile));
 
 adminRoutes.get('/claims', asyncHandler(listClaims));
 adminRoutes.get('/claims/:id', asyncHandler(getClaim));
+adminRoutes.delete(
+  '/claims/:id',
+  requireSupervisor,
+  asyncHandler(deleteClaim)
+);
 
 adminRoutes.patch('/claims/:id', requireClaimEditor, asyncHandler(updateClaim));
 

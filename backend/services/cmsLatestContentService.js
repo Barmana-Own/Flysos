@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
+import { ABOUT_PAGE_SEO, getCanonicalAboutBlocks } from './aboutPageContentService.js';
+import { TERMS_PAGE_SEO, TERMS_PAGE_TITLE, getCanonicalTermsBlocks } from './termsPageContentService.js';
+
 const MIGRATION_ID = 'cms-builder-content-v7-round6-20260720';
 
 const block = (id, type, order, content = {}, styles = {}, children = []) => ({
@@ -141,14 +144,8 @@ const pages = {
   },
   about: {
     title: 'درباره ما',
-    blocks: [
-      block('about-hero', 'hero', 0, { title: 'پشتیبان و حامی حقوق مسافران در سفرهای هوایی', subtitle: 'درباره Flysos', description: 'Flysos پلتفرم تخصصی احقاق حقوق مسافران هوایی است و با تلفیق دانش حقوقی، تجربه هوانوردی و فناوری اطلاعات فعالیت می‌کند.' }, { background: '#ffffff', color: '#0f172a', padding: '56px 32px' }),
-      block('about-advantages', 'features', 1, { title: 'چرا به تیم Flysos اعتماد می‌کنند؟', items: [
-        { id: 'about-a1', title: 'تجربه مدیریتی در صنعت هوایی', description: 'بهره‌گیری از مدیران و کارشناسان باسابقه صنعت هوانوردی.' },
-        { id: 'about-a2', title: 'تخصص حقوقی', description: 'همکاری با وکلای مجرب و کارشناسان رسمی در پرونده‌های حقوق مسافر.' },
-        { id: 'about-a3', title: 'پیگیری شفاف', description: 'اطلاع‌رسانی مستمر وضعیت پرونده تا وصول و واریز خسارت.' },
-      ] }, { background: '#f8fafc', padding: '52px 24px' }),
-    ],
+    blocks: getCanonicalAboutBlocks(),
+    seo: ABOUT_PAGE_SEO,
   },
   rights: {
     title: 'حقوق مسافر',
@@ -161,14 +158,10 @@ const pages = {
       ] }, { background: '#f8fafc', padding: '52px 24px' }),
     ],
   },
-  rules: {
-    title: 'قوانین',
-    blocks: [block('rules-main', 'accordion', 0, { title: 'شرایط و ضوابط خدمات Flysos', description: 'چارچوب حقوقی همکاری با مسافر', items: [
-      ['حوزه خدمات', 'خدمات شامل بررسی مدارک، استعلام پرواز، ثبت وکالت، طرح دعوا، پیگیری قضایی و وصول غرامت است.'],
-      ['حق‌الزحمه', 'هیچ هزینه اولیه‌ای دریافت نمی‌شود و فقط پس از موفقیت، ۲۰٪ از خسارت وصول‌شده به عنوان حق‌الزحمه کسر می‌شود.'],
-      ['تعهدات مسافر', 'مسافر متعهد است اطلاعات هویتی، پرواز و مدارک را صحیح و کامل ارائه کند.'],
-      ['محرمانگی', 'اطلاعات و مدارک صرفاً برای پیگیری پرونده استفاده و محرمانه نگهداری می‌شوند.'],
-    ].map(([question, answer], index) => ({ id: `rules-${index + 1}`, question, answer })) }, { background: '#f8fafc', padding: '52px 24px' })],
+  terms: {
+    title: TERMS_PAGE_TITLE,
+    blocks: getCanonicalTermsBlocks(),
+    seo: TERMS_PAGE_SEO,
   },
   articles: {
     title: 'مقالات',
@@ -239,7 +232,7 @@ const footerBlocks = [block('global-footer-main', 'site-footer', 0, {
       { id: 'ff1', label: 'حقوق مسافر', page: 'rights' },
       { id: 'ff2', label: 'سوالات متداول', page: 'faq' },
       { id: 'ff3', label: 'مقالات', page: 'articles' },
-      { id: 'ff4', label: 'شرایط و ضوابط خدمات', page: 'rules' },
+      { id: 'ff4', label: 'شرایط و ضوابط خدمات', page: 'terms' },
       { id: 'ff5', label: 'درباره ما', page: 'about' },
     ] },
   ],

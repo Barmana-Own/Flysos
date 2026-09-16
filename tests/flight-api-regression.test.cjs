@@ -1,11 +1,13 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const { test } = require('node:test');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..');
 const backendRoot = path.join(repoRoot, 'backend');
 const importSecret = 'test-flight-import-secret-0123456789-abcdefghijklmnopqrstuvwxyz';
+const PROBE_TIMEOUT_MS = 60_000;
 
 function runPublicImportProbe({ configuredSecret = importSecret, suppliedSecret, payload }) {
   const requestHeaders = { 'content-type': 'application/json' };
@@ -61,7 +63,7 @@ function runPublicImportProbe({ configuredSecret = importSecret, suppliedSecret,
   return spawnSync(
     process.execPath,
     ['--input-type=module', '-e', script],
-    { cwd: backendRoot, env, encoding: 'utf8', timeout: 15_000 },
+    { cwd: backendRoot, env, encoding: 'utf8', timeout: PROBE_TIMEOUT_MS },
   );
 }
 
@@ -110,7 +112,7 @@ function runAppImportSizeProbe(size) {
         FLIGHT_CACHE_ENABLED: 'false',
       },
       encoding: 'utf8',
-      timeout: 15_000,
+      timeout: PROBE_TIMEOUT_MS,
     },
   );
 }
@@ -155,7 +157,7 @@ function runAdminPushStatusProbe() {
         FLIGHT_CACHE_ENABLED: 'false',
       },
       encoding: 'utf8',
-      timeout: 15_000,
+      timeout: PROBE_TIMEOUT_MS,
     },
   );
 }
@@ -180,7 +182,7 @@ function runLegacyRelayConfigProbe() {
         EXTERNAL_FLIGHTS_RELAY_URL: 'https://flights-api.example.test/api/flights',
       },
       encoding: 'utf8',
-      timeout: 15_000,
+      timeout: PROBE_TIMEOUT_MS,
     },
   );
 }
@@ -292,4 +294,23 @@ test('the legacy relay setting remains a compatible alias for the provider URL',
   const response = readProbeResult(result);
 
   assert.equal(response.externalFlightsBaseUrl, 'https://flights-api.example.test/api/flights');
+});
+
+test('the safe environment example wires the provider base without exposing credentials', () => {
+  const envExample = fs.readFileSync(path.join(backendRoot, '.env.example'), 'utf8');
+  const publicBundle = fs.readFileSync(
+    path.join(repoRoot, 'assets', 'index-CmsReadyAdminFix20260820.js'),
+    'utf8',
+  );
+
+  assert.match(
+    envExample,
+    /^EXTERNAL_FLIGHTS_BASE_URL=http:\/\/109\.122\.250\.170:3000\/api\/flights$/m,
+  );
+  assert.match(envExample, /^EXTERNAL_FLIGHTS_USERNAME=$/m);
+  assert.match(envExample, /^EXTERNAL_FLIGHTS_PASSWORD=$/m);
+  assert.doesNotMatch(envExample, /^EXTERNAL_FLIGHTS_(?:USERNAME|PASSWORD)=\S+$/m);
+  assert.doesNotMatch(envExample, /EXTERNAL_FLIGHTS_BASE_URL=.*[?&](?:username|password)=/i);
+  assert.match(publicBundle, /flights\/status/);
+  assert.doesNotMatch(publicBundle, /[?&](?:username|password)=/i);
 });

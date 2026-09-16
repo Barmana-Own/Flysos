@@ -1,6 +1,10 @@
+# Public crawl policy for Flysos.ir.
+# Keep the public pages and public assets crawlable; hide application internals.
 User-agent: *
 Allow: /
-Disallow: /admin/
-Disallow: /api/
+
+Disallow: /admin
+Disallow: /api
+Disallow: /backend
 
 Sitemap: https://flysos.ir/sitemap.xml

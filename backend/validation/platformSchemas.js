@@ -3,6 +3,7 @@ import { claimStatusSchema } from './claimSchemas.js';
 
 export const sendDirectSmsSchema = z.object({
   message: z.string().trim().min(1).max(1000),
+  claimId: z.string().trim().min(1).max(191).nullable().optional(),
 });
 
 export const updateSettingsSchema = z
@@ -13,6 +14,7 @@ export const updateSettingsSchema = z
     autoSms: z.boolean().optional(),
     maintenanceMode: z.boolean().optional(),
     requireNationalId: z.boolean().optional(),
+    goftinoWidgetId: z.string().trim().max(191).nullable().optional(),
     powerOfAttorneyUrl: z.string().trim().max(2000).nullable().optional(),
     powerOfAttorneyDocumentUrl: z.string().trim().max(2000).nullable().optional(),
     passengerRightsUrl: z.string().trim().max(2000).nullable().optional(),
@@ -20,6 +22,7 @@ export const updateSettingsSchema = z
     smsTemplates: z.object({
       registration: z.string().trim().max(3000).optional(),
       statusUpdate: z.string().trim().max(3000).optional(),
+      rejected: z.string().trim().max(3000).optional(),
       replacementTicket: z.string().trim().max(3000).optional(),
       bankDetails: z.string().trim().max(3000).optional(),
       supportReceived: z.string().trim().max(3000).optional(),

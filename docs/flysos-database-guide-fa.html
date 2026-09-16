@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>راهنمای ساختار پایگاه‌داده سامانه FlySOS</title>
+  <style>
+    :root { color-scheme: light; font-family: Vazirmatn, Tahoma, Arial, sans-serif; }
+    body { margin: 0; background: #f4f7fb; color: #172033; direction: rtl; text-align: right; }
+    main { max-width: 1080px; margin: 32px auto; padding: 40px 48px; background: #fff; border: 1px solid #e4eaf2; border-radius: 18px; box-shadow: 0 12px 35px rgba(25, 45, 75, .08); }
+    #document { direction: rtl; text-align: right; line-height: 2; overflow-wrap: anywhere; }
+    h1, h2, h3, h4 { color: #0b4f8a; line-height: 1.5; margin: 1.5em 0 .65em; }
+    h1 { margin-top: 0; font-size: 2rem; }
+    h2 { border-bottom: 1px solid #dce5ef; padding-bottom: .3em; }
+    p { margin: .7em 0; }
+    ul, ol { padding-right: 1.7rem; padding-left: 0; }
+    blockquote { margin: 1em 0; padding: .55em 1em; border-right: 4px solid #36a3e8; background: #f1f8fd; color: #35516d; }
+    code { direction: ltr; unicode-bidi: plaintext; background: #eef3f8; border-radius: 5px; padding: .08em .35em; font-family: Consolas, monospace; }
+    pre { direction: ltr; text-align: left; overflow-x: auto; padding: 16px; border-radius: 10px; background: #101827; color: #e8eef7; line-height: 1.6; }
+    pre code { background: transparent; padding: 0; color: inherit; }
+    table { width: 100%; border-collapse: collapse; margin: 1.2em 0; direction: rtl; }
+    th, td { border: 1px solid #dbe4ee; padding: 9px 11px; vertical-align: top; text-align: right; }
+    th { background: #edf5fb; color: #0b4f8a; }
+    a { color: #0878c9; }
+    .notice { padding: 12px 16px; border-radius: 10px; background: #fff8e8; color: #6e5210; }
+    .error { color: #a33a3a; }
+    @media (max-width: 700px) { main { margin: 0; padding: 24px 18px; border-radius: 0; } h1 { font-size: 1.55rem; } table { display: block; overflow-x: auto; white-space: nowrap; } }
+  </style>
+</head>
+<body>
+  <main>
+    <article id="document" aria-live="polite"><p class="notice">در حال بارگذاری راهنما...</p></article>
+  </main>
+  <script>
+    const escapeHtml = (value) => value.replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const inlineMarkdown = (value) => {
+      let text = escapeHtml(value);
+      text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+      text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer">$1</a>');
+      return text;
+    };
+    const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+    const isSeparator = (line) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+    const renderTable = (rows) => {
+      const cells = rows.filter((row) => !isSeparator(row)).map((row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim()));
+      if (!cells.length) return '';
+      const header = '<thead><tr>' + cells[0].map((cell) => '<th>' + inlineMarkdown(cell) + '</th>').join('') + '</tr></thead>';
+      const body = cells.slice(1).map((row) => '<tr>' + row.map((cell) => '<td>' + inlineMarkdown(cell) + '</td>').join('') + '</tr>').join('');
+      return '<table>' + header + (body ? '<tbody>' + body + '</tbody>' : '') + '</table>';
+    };
+    const renderMarkdown = (source) => {
+      const lines = source.replace(/^<div[^>]*>\s*/i, '').replace(/\s*<\/div>\s*$/i, '').split(/\r?\n/);
+      const output = [];
+      let paragraph = [], listType = null, code = false, codeLines = [], tableRows = [];
+      const flushParagraph = () => { if (paragraph.length) { output.push('<p>' + inlineMarkdown(paragraph.join(' ')) + '</p>'); paragraph = []; } };
+      const flushList = () => { if (listType) { output.push('</' + listType + '>'); listType = null; } };
+      const flushTable = () => { if (tableRows.length) { output.push(renderTable(tableRows)); tableRows = []; } };
+      for (const line of lines) {
+        if (/^\s*```/.test(line)) { if (!code) { flushParagraph(); flushList(); flushTable(); code = true; codeLines = []; } else { output.push('<pre><code>' + escapeHtml(codeLines.join('\n')) + '</code></pre>'); code = false; } continue; }
+        if (code) { codeLines.push(line); continue; }
+        if (isTableRow(line)) { flushParagraph(); flushList(); tableRows.push(line); continue; }
+        if (tableRows.length) flushTable();
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^\s*(#{1,4})\s+(.+)$/);
+        if (heading) { flushParagraph(); flushList(); output.push('<h' + heading[1].length + '>' + inlineMarkdown(heading[2]) + '</h' + heading[1].length + '>'); continue; }
+        const quote = line.match(/^\s*>\s?(.*)$/);
+        if (quote) { flushParagraph(); flushList(); output.push('<blockquote>' + inlineMarkdown(quote[1]) + '</blockquote>'); continue; }
+        const unordered = line.match(/^\s*[-*]\s+(.+)$/);
+        const ordered = line.match(/^\s*[0-9۰-۹]+[.)]\s+(.+)$/);
+        if (unordered || ordered) { flushParagraph(); const nextType = ordered ? 'ol' : 'ul'; if (listType !== nextType) { flushList(); output.push('<' + nextType + '>'); listType = nextType; } output.push('<li>' + inlineMarkdown((unordered || ordered)[1]) + '</li>'); continue; }
+        flushList(); paragraph.push(line.trim());
+      }
+      if (code) output.push('<pre><code>' + escapeHtml(codeLines.join('\n')) + '</code></pre>');
+      flushTable(); flushParagraph(); flushList();
+      return output.join('\n');
+    };
+    fetch('flysos-database-guide-fa.md', { cache: 'no-store' })
+      .then((response) => { if (!response.ok) throw new Error('guide unavailable'); return response.text(); })
+      .then((source) => { document.getElementById('document').innerHTML = renderMarkdown(source); })
+      .catch(() => { document.getElementById('document').innerHTML = '<p class="error">بارگذاری راهنما انجام نشد. فایل Markdown را در همان پوشه بررسی کنید.</p>'; });
+  </script>
+</body>
+</html>

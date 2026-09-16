@@ -1,5 +1,24 @@
 import { randomUUID } from 'node:crypto';
 
+import {
+  getCanonicalAboutBlocks,
+  normalizeAboutBlocks,
+  normalizeAboutSeo,
+  normalizeAboutTitle,
+} from './aboutPageContentService.js';
+import {
+  getCanonicalTermsBlocks,
+  normalizeTermsBlocks,
+  normalizeTermsSeo,
+  normalizeTermsTitle,
+  TERMS_PAGE_SEO,
+} from './termsPageContentService.js';
+import {
+  CLAIM_RECEIPT_CONTENT,
+  RECEIPT_CONTENT_KEY,
+  normalizeTrackBlocks,
+} from './claimReceiptContentService.js';
+
 const block = (id, type, order, content = {}, styles = {}, children = []) => ({
   id, type, order, visible: true, content, styles, settings: {},
   animations: { type: 'none', delay: 0, duration: 500 }, responsive: {}, children,
@@ -83,6 +102,7 @@ const trackSuccessBlocks = [block('track-success', 'section', 0, {
   processingFinalText: 'در حال ثبت پرونده و استخراج اطلاعات بلیت هستیم',
   processingNextText: 'در حال انتقال امن به مرحله بعد هستید',
   processingDescription: 'برای جلوگیری از ثبت درخواست تکراری، تا پایان عملیات دسترسی صفحه موقتاً بسته شده است.',
+  [RECEIPT_CONTENT_KEY]: CLAIM_RECEIPT_CONTENT,
 }, { background: '#ffffff', color: '#0f172a', padding: '40px 24px' })];
 
 const pageSeeds = {
@@ -96,21 +116,7 @@ const pageSeeds = {
     ],
   }, { background: '#f8fafc', color: '#0f172a', padding: '64px 24px' })],
   faq: [block('faq-page-main', 'faq', 0, { title: 'سوالات متداول مسافران', description: 'پاسخ به رایج‌ترین پرسش‌های شما درباره ثبت و پیگیری خسارت پرواز', items: faqItems }, { background: '#f8fafc', padding: '64px 24px' })],
-  about: [
-    block('about-hero', 'hero', 0, { title: 'پشتیبان و حامی حقوق مسافران در سفرهای هوایی', subtitle: 'درباره flysos.ir', description: 'flysos.ir به عنوان پلتفرم تخصصی احقاق حقوق مسافران هوایی با تلفیق دانش حقوقی، تجربه هوانوردی و فناوری اطلاعات فعالیت می‌کند.' }, { background: '#ffffff', color: '#0f172a', padding: '64px 32px' }),
-    block('about-advantages', 'features', 1, { title: 'چرا به تیم flysos.ir اعتماد می‌کنند؟', items: [
-      { id:'about-a1', title:'۱. ۱۵ سال تجربه مدیریتی در صنعت هوایی', description:'بهره‌گیری از تخصص مدیران باسابقه در حقوق هوانوردی، بازرسی، دیسپچ و خدمات فرودگاهی.' },
-      { id:'about-a2', title:'۲. سابقه فعالیت در نهادهای کلیدی', description:'سابقه همکاری و مشاوره با نهادهای کلیدی صنعت هوانوردی و حمایت از حقوق مصرف‌کنندگان.' },
-      { id:'about-a3', title:'۳. وکلای تراز اول و کارشناسان رسمی', description:'دفاع قضایی توسط وکلای مجرب هوانوردی و کارشناسان رسمی دادگستری.' },
-      { id:'about-a4', title:'۴. تیم IT و هوش مصنوعی هوانوردی', description:'پایش هوشمند تاخیر و لغو پرواز و تخمین درصد موفقیت پرونده.' },
-    ] }, { background:'#f8fafc', padding:'64px 24px' }),
-    block('about-mission', 'banner', 2, { title:'ماموریت ما در flysos.ir', text:'ماموریت ما ترویج آگاهی از حقوق مسافر، بهبود پاسخگویی ایرلاین‌ها و تسریع دریافت غرامت‌های قانونی است.' }, { background:'#0f172a', color:'#ffffff', padding:'56px 32px', borderRadius:'24px' }),
-    block('about-difference', 'features', 3, { title:'آنچه ما را متمایز می‌کند', items:[
-      {id:'about-d1',title:'دقت و تخصص بی‌نظیر',description:'تمرکز کامل بر قوانین حقوق مسافر و مراجع قضایی هوانوردی.'},
-      {id:'about-d2',title:'مشتری‌مداری واقعی',description:'پشتیبانی مستمر و اطلاع‌رسانی روند پرونده.'},
-      {id:'about-d3',title:'شفافیت و پاسخگویی',description:'بدون مراجعه حضوری یا پرداخت مبالغ علی‌الحساب.'},
-    ] }, { background:'#ffffff', padding:'64px 24px' }),
-  ],
+  about: getCanonicalAboutBlocks(),
   rights: [
     block('rights-hero','hero',0,{title:'حقوق مسافر در پروازهای هوایی',subtitle:'حقوق قانونی شما در پرواز',description:'مرجع جامع قوانین، خدمات و غرامت‌های مصوب مسافران پروازهای داخلی و بین‌المللی.'},{background:'#ffffff',color:'#0f172a',padding:'64px 32px'}),
     block('rights-principles','features',1,{title:'اصول بنیادین حقوق مسافر',items:[
@@ -129,7 +135,7 @@ const pageSeeds = {
       {id:'rights-f2',question:'مبلغ غرامت تاخیر پرواز داخلی چگونه محاسبه می‌شود؟',answer:'بر اساس مدت تاخیر و جدول مصوب سازمان هواپیمایی کشوری محاسبه می‌شود.'},
     ]},{background:'#f8fafc',padding:'64px 24px'}),
   ],
-  rules: [block('rules-main','accordion',0,{title:'شرایط و ضوابط خدمات flysos.ir',description:'چارچوب حقوقی همکاری بین مسافر و flysos.ir',items:[
+  terms: [block('rules-main','accordion',0,{title:'شرایط و ضوابط خدمات flysos.ir',description:'چارچوب حقوقی همکاری بین مسافر و flysos.ir',items:[
     ['تعاریف و کلیات','این توافق‌نامه قرارداد حقوقی میان مسافر و flysos.ir و منطبق با قوانین جمهوری اسلامی ایران و آیین‌نامه‌های سازمان هواپیمایی کشوری است.'],
     ['حوزه خدمات و نحوه پیگیری','خدمات شامل استعلام پرواز، تطبیق تاخیر، ثبت دادخواست، پیگیری قضایی و وصول غرامت است.'],
     ['وکالت و وکلای پایه یک دادگستری','ثبت نهایی پرونده منوط به تایید وکالت‌نامه رسمی در سامانه ثنا توسط مسافر است.'],
@@ -178,6 +184,10 @@ const globalSeeds = {
 };
 
 function parseBlocks(value) { if (Array.isArray(value)) return value; try { return JSON.parse(value || '[]'); } catch { return []; } }
+function parseJsonValue(value, fallback = {}) {
+  if (value && typeof value === 'object') return value;
+  try { return JSON.parse(value || JSON.stringify(fallback)); } catch { return fallback; }
+}
 
 async function ensureTrackPage(connection) {
   const [rows] = await connection.query('SELECT `id`,`blocks`,`draftBlocks`,`publishedBlocks` FROM `CmsPage` WHERE `slug`=? LIMIT 1', ['track']);
@@ -318,6 +328,7 @@ async function restoreBuiltInPageFallbacks(connection) {
   if (done[0]) return 'skipped';
 
   for (const [slug, blocks] of Object.entries(pageSeeds)) {
+    if (slug === 'terms') continue;
     await connection.query(
       'UPDATE `CmsPage` SET `status`=?,`draftBlocks`=?,`publishedBlocks`=NULL,`publishedSeo`=NULL,`publishedAt`=NULL WHERE `slug`=?',
       ['draft', JSON.stringify(blocks), slug],
@@ -351,8 +362,9 @@ async function refreshEditorDrafts(connection) {
 
   for (const [slug, blocks] of Object.entries(pageSeeds)) {
     // Articles are authored by the dedicated article manager. Never replace
-    // an editor's saved article list with bundled seed content.
-    if (slug === 'articles') continue;
+    // an editor's saved article list with bundled seed content. Terms are
+    // editor-owned as well; repairTermsContent handles only missing fields.
+    if (slug === 'articles' || slug === 'terms') continue;
     await connection.query(
       'UPDATE `CmsPage` SET `draftBlocks`=?,`updatedAt`=NOW(3) WHERE `slug`=?',
       [JSON.stringify(blocks), slug],
@@ -361,6 +373,133 @@ async function refreshEditorDrafts(connection) {
 
   await connection.query('INSERT IGNORE INTO `CmsMigration` (`id`) VALUES (?)',[marker]);
   return homeRows[0] ? 'migrated' : 'home-missing';
+}
+
+async function ensureTermsPage(connection) {
+  const canonicalBlocks = JSON.stringify(getCanonicalTermsBlocks());
+  const canonicalSeo = JSON.stringify(TERMS_PAGE_SEO);
+  const [termsRows] = await connection.query(
+    'SELECT `id`,`title`,`blocks`,`draftBlocks`,`publishedBlocks` FROM `CmsPage` WHERE `slug`=? LIMIT 1',
+    ['terms'],
+  );
+  if (termsRows[0]) return 'existing';
+
+  const [legacyRows] = await connection.query(
+    'SELECT `id`,`title` FROM `CmsPage` WHERE `slug`=? LIMIT 1',
+    ['rules'],
+  );
+  if (legacyRows[0]) {
+    const title = ['قوانین', 'قواعد', ''].includes(String(legacyRows[0].title || '').trim())
+      ? 'شرایط و ضوابط خدمات'
+      : legacyRows[0].title;
+    await connection.query('UPDATE `CmsPage` SET `slug`=?,`title`=?,`updatedAt`=NOW(3) WHERE `id`=?', ['terms', title, legacyRows[0].id]);
+    return 'renamed-legacy-rules';
+  }
+
+  await connection.query(
+    `INSERT INTO \`CmsPage\` (\`id\`,\`title\`,\`slug\`,\`status\`,\`blocks\`,\`seo\`,\`draftBlocks\`,\`publishedBlocks\`,\`draftSeo\`,\`publishedSeo\`,\`publishedAt\`,\`pageType\`,\`category\`,\`tags\`,\`keywords\`,\`featuredImageUrl\`) VALUES (?,?,?,'published',?,?,?,?,?,?,NOW(3),'page','',?,?,'')`,
+    [randomUUID(), 'شرایط و ضوابط خدمات', 'terms', canonicalBlocks, canonicalSeo, canonicalBlocks, canonicalBlocks, canonicalSeo, canonicalSeo, 'قوانین و شرایط', 'Flysos, شرایط خدمات'],
+  );
+  return 'created';
+}
+
+async function repairTrackReceiptContent(connection) {
+  const marker = 'editable-track-receipt-content-v1';
+  const [done] = await connection.query('SELECT `id` FROM `CmsMigration` WHERE `id`=? LIMIT 1', [marker]);
+  if (done[0]) return 'skipped';
+
+  const [rows] = await connection.query(
+    'SELECT `id`,`blocks`,`draftBlocks`,`publishedBlocks` FROM `CmsPage` WHERE `slug`=? LIMIT 1',
+    ['track'],
+  );
+  if (!rows[0]) return 'missing';
+
+  const normalizeStored = (value) => {
+    const blocks = parseBlocks(value);
+    return blocks.length ? JSON.stringify(normalizeTrackBlocks(blocks, 'track')) : value;
+  };
+  await connection.query(
+    'UPDATE `CmsPage` SET `blocks`=?,`draftBlocks`=?,`publishedBlocks`=?,`updatedAt`=NOW(3) WHERE `id`=?',
+    [normalizeStored(rows[0].blocks), normalizeStored(rows[0].draftBlocks), normalizeStored(rows[0].publishedBlocks), rows[0].id],
+  );
+  await connection.query('INSERT INTO `CmsMigration` (`id`) VALUES (?)', [marker]);
+  return 'migrated';
+}
+
+async function repairAboutContent(connection) {
+  const marker = 'about-public-content-unification-v1';
+  const [done] = await connection.query('SELECT `id` FROM `CmsMigration` WHERE `id`=? LIMIT 1',[marker]);
+  if (done[0]) return 'skipped';
+
+  const [rows] = await connection.query(
+    'SELECT `id`,`title`,`blocks`,`seo`,`draftBlocks`,`publishedBlocks`,`draftSeo`,`publishedSeo`,`publishedAt` FROM `CmsPage` WHERE `slug`=? LIMIT 1',
+    ['about'],
+  );
+  if (!rows[0]) return 'missing';
+
+  const row = rows[0];
+  const draftSource = parseBlocks(row.draftBlocks).length
+    ? parseBlocks(row.draftBlocks)
+    : parseBlocks(row.blocks);
+  const publishedSource = parseBlocks(row.publishedBlocks).length
+    ? parseBlocks(row.publishedBlocks)
+    : draftSource;
+  const draftBlocks = normalizeAboutBlocks(draftSource, 'about');
+  const publishedBlocks = normalizeAboutBlocks(publishedSource, 'about');
+  const draftSeo = normalizeAboutSeo(parseJsonValue(row.draftSeo, parseJsonValue(row.seo, {})));
+  const publishedSeo = normalizeAboutSeo(parseJsonValue(row.publishedSeo, parseJsonValue(row.seo, {})));
+
+  await connection.query(
+    'UPDATE `CmsPage` SET `title`=?,`status`=\'published\',`blocks`=?,`seo`=?,`draftBlocks`=?,`publishedBlocks`=?,`draftSeo`=?,`publishedSeo`=?,`publishedAt`=COALESCE(`publishedAt`,NOW(3)),`updatedAt`=NOW(3) WHERE `id`=?',
+    [
+      normalizeAboutTitle(row.title),
+      JSON.stringify(publishedBlocks),
+      JSON.stringify(publishedSeo),
+      JSON.stringify(draftBlocks),
+      JSON.stringify(publishedBlocks),
+      JSON.stringify(draftSeo),
+      JSON.stringify(publishedSeo),
+      row.id,
+    ],
+  );
+  await connection.query('INSERT IGNORE INTO `CmsMigration` (`id`) VALUES (?)',[marker]);
+  return 'migrated';
+}
+
+async function repairTermsContent(connection) {
+  const marker = 'terms-public-content-unification-v1';
+  const [done] = await connection.query('SELECT `id` FROM `CmsMigration` WHERE `id`=? LIMIT 1', [marker]);
+  if (done[0]) return 'skipped';
+
+  const [rows] = await connection.query(
+    'SELECT `id`,`title`,`blocks`,`seo`,`draftBlocks`,`publishedBlocks`,`draftSeo`,`publishedSeo`,`publishedAt` FROM `CmsPage` WHERE `slug`=? LIMIT 1',
+    ['terms'],
+  );
+  if (!rows[0]) return 'missing';
+
+  const row = rows[0];
+  const draftSource = parseBlocks(row.draftBlocks).length ? parseBlocks(row.draftBlocks) : parseBlocks(row.blocks);
+  const publishedSource = parseBlocks(row.publishedBlocks).length ? parseBlocks(row.publishedBlocks) : draftSource;
+  const draftBlocks = normalizeTermsBlocks(draftSource, 'terms');
+  const publishedBlocks = normalizeTermsBlocks(publishedSource, 'terms');
+  const draftSeo = normalizeTermsSeo(parseJsonValue(row.draftSeo, parseJsonValue(row.seo, {})));
+  const publishedSeo = normalizeTermsSeo(parseJsonValue(row.publishedSeo, parseJsonValue(row.seo, {})));
+
+  await connection.query(
+    'UPDATE `CmsPage` SET `title`=?,`status`=\'published\',`blocks`=?,`seo`=?,`draftBlocks`=?,`publishedBlocks`=?,`draftSeo`=?,`publishedSeo`=?,`publishedAt`=COALESCE(`publishedAt`,NOW(3)),`updatedAt`=NOW(3) WHERE `id`=?',
+    [
+      normalizeTermsTitle(row.title),
+      JSON.stringify(publishedBlocks),
+      JSON.stringify(publishedSeo),
+      JSON.stringify(draftBlocks),
+      JSON.stringify(publishedBlocks),
+      JSON.stringify(draftSeo),
+      JSON.stringify(publishedSeo),
+      row.id,
+    ],
+  );
+  await connection.query('INSERT IGNORE INTO `CmsMigration` (`id`) VALUES (?)', [marker]);
+  return 'migrated';
 }
 
 async function seedGlobals(connection) {
@@ -471,7 +610,9 @@ async function addBarmanaFooterSignature(connection) {
 export async function seedCmsPageContent(connection) {
   const homeResult = await seedPage(connection,'home',homeBlocks);
   const trackResult = await ensureTrackPage(connection);
-  const results = { home:homeResult, track:trackResult };
+  const trackReceiptResult = await repairTrackReceiptContent(connection);
+  const termsResult = await ensureTermsPage(connection);
+  const results = { home:homeResult, track:trackResult, trackReceipt:trackReceiptResult, terms:termsResult };
   for (const [slug,blocks] of Object.entries(pageSeeds)) {
     if (slug === 'track' && trackResult === 'created') continue;
     results[slug] = await seedPage(connection,slug,blocks);
@@ -479,6 +620,8 @@ export async function seedCmsPageContent(connection) {
   results.homeHero = await repairHome(connection);
   results.publicFallbacks = await restoreBuiltInPageFallbacks(connection);
   results.editorDrafts = await refreshEditorDrafts(connection);
+  results.aboutContent = await repairAboutContent(connection);
+  results.termsContent = await repairTermsContent(connection);
   await seedGlobals(connection);
   results.globals = await repairGlobals(connection);
   results.footerTrustSeal = await addEditableFooterTrustSeal(connection);

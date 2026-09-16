@@ -41,17 +41,32 @@ const claimStageLabels = {
   5: 'انتظار رأی',
   6: 'وصول خسارت',
   7: 'تسویه با مسافر',
+  8: 'رد شده',
 };
 
-async function sendClaimStageSms(claim, stageLabel) {
+async function sendClaimStageSms(claim, stageLabel, { templateKey } = {}) {
+  const selectedTemplate = templateKey || (stageLabel === claimStageLabels[8] ? 'rejected' : 'statusUpdate');
   return sendAutomaticSms(
     claim.phoneNumber || claim.customer?.phoneNumber,
-    await getSmsTemplate('statusUpdate', {
+    await getSmsTemplate(selectedTemplate, {
       trackingCode: claim.trackingCode,
       status: stageLabel,
       stage: stageLabel,
-    })
+    }),
+    { claimId: claim.id, eventType: selectedTemplate },
   );
+}
+
+async function sendClaimStageSmsBestEffort(claim, stageLabel, options = {}) {
+  try {
+    return await sendClaimStageSms(claim, stageLabel, options);
+  } catch (error) {
+    // A provider/configuration failure must not roll back or hide a successful
+    // admin status transition. The failed attempt is already handled by the
+    // SMS service when possible; keep the request contract successful here.
+    console.warn('[claim-sms] rejected/status notification failed:', error?.message || error);
+    return { ok: false, reason: 'SMS_DISPATCH_FAILED' };
+  }
 }
 
 function parseOrThrow(schema, value) {
@@ -127,6 +142,25 @@ async function loadFullClaim(claimId, tx = null) {
     createdAt: sh.createdAt ? new Date(sh.createdAt) : new Date(),
   }));
 
+  // Load outbound/inbound communication history for the claim detail panel.
+  // Older installations may not have MessageLog yet; keep claim loading
+  // available in that case without changing the database schema here.
+  let smsLogs = [];
+  try {
+    smsLogs = await runner.query(
+      'SELECT id, direction, channel, recipient, body, status, providerMessageId, createdAt FROM MessageLog WHERE claimId = ? ORDER BY createdAt DESC',
+      [claimId]
+    );
+  } catch (error) {
+    if (!['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error?.code)) {
+      throw error;
+    }
+  }
+  claim.smsLogs = smsLogs.map(log => ({
+    ...log,
+    createdAt: log.createdAt ? new Date(log.createdAt) : new Date(),
+  }));
+
   // Load notes
   const notes = await runner.query(
     'SELECT cn.*, au.id as authorId, au.username, au.name as authorName FROM ClaimNote cn LEFT JOIN AdminUser au ON cn.authorAdminId = au.id WHERE cn.claimId = ? ORDER BY cn.createdAt DESC',
@@ -162,6 +196,73 @@ function canAccessClaim(admin, claim) {
 function assertCanAccessClaim(admin, claim) {
   if (!canAccessClaim(admin, claim)) {
     throw new AppError('You do not have access to this claim.', 403, 'CLAIM_ACCESS_DENIED');
+  }
+}
+
+const claimDeleteTables = [
+  'QuestionnaireAnswer',
+  'ClaimStatusHistory',
+  'ClaimNote',
+  'ClaimBankDetails',
+  'FlightInfo',
+  'Passenger',
+  'UploadedFile',
+];
+
+const claimHistoryTables = [
+  'Notification',
+  'MessageLog',
+  'SupportTicket',
+];
+
+async function findExistingTables(tx, tableNames) {
+  const placeholders = tableNames.map(() => '?').join(', ');
+  const rows = await tx.query(
+    `SELECT TABLE_NAME
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN (${placeholders})`,
+    tableNames,
+  );
+
+  return new Set(rows.map((row) => String(row.TABLE_NAME || row.table_name || '')));
+}
+
+function isPathInside(rootPath, candidatePath) {
+  const relativePath = path.relative(rootPath, candidatePath);
+  return Boolean(
+    relativePath &&
+      relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath),
+  );
+}
+
+async function removeClaimFiles(files) {
+  const uploadRoot = path.resolve(process.cwd(), env.uploadDir);
+
+  for (const file of files) {
+    const storedPath = path.resolve(
+      file.path || path.join(uploadRoot, file.filename || ''),
+    );
+
+    if (!isPathInside(uploadRoot, storedPath)) {
+      console.warn('[claim-delete] Skipped uploaded file outside upload directory.', {
+        fileId: file.id || null,
+      });
+      continue;
+    }
+
+    try {
+      await fs.unlink(storedPath);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        console.warn('[claim-delete] Uploaded file cleanup failed.', {
+          fileId: file.id || null,
+          code: error?.code || 'UNKNOWN',
+        });
+      }
+    }
   }
 }
 
@@ -256,8 +357,90 @@ export async function getClaim(req, res) {
   res.json(mapClaimForAdmin(claim));
 }
 
+export async function deleteClaim(req, res) {
+  if (req.admin?.role !== 'supervisor') {
+    throw new AppError(
+      'This action is only available to supervisor accounts.',
+      403,
+      'SUPERVISOR_ONLY',
+    );
+  }
+
+  const claimId = String(req.params.id || '').trim();
+  if (!claimId || claimId.length > 191) {
+    throw new AppError('Claim id is invalid.', 400, 'INVALID_CLAIM_ID');
+  }
+
+  const uploadedFiles = await transaction(async (tx) => {
+    const claims = await tx.query(
+      'SELECT id FROM Claim WHERE id = ? LIMIT 1 FOR UPDATE',
+      [claimId],
+    );
+
+    if (!claims.length) {
+      throw new AppError('Claim not found.', 404, 'CLAIM_NOT_FOUND');
+    }
+
+    const existingTables = await findExistingTables(tx, [
+      ...claimDeleteTables,
+      ...claimHistoryTables,
+    ]);
+    const files = existingTables.has('UploadedFile')
+      ? await tx.query(
+        'SELECT id, path, filename FROM UploadedFile WHERE claimId = ?',
+        [claimId],
+      )
+      : [];
+
+    if (existingTables.has('QuestionnaireAnswer')) {
+      await tx.query('DELETE FROM QuestionnaireAnswer WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('ClaimStatusHistory')) {
+      await tx.query('DELETE FROM ClaimStatusHistory WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('ClaimNote')) {
+      await tx.query('DELETE FROM ClaimNote WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('ClaimBankDetails')) {
+      await tx.query('DELETE FROM ClaimBankDetails WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('FlightInfo')) {
+      await tx.query('DELETE FROM FlightInfo WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('Passenger')) {
+      await tx.query('DELETE FROM Passenger WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('UploadedFile')) {
+      await tx.query('DELETE FROM UploadedFile WHERE claimId = ?', [claimId]);
+    }
+
+    // Preserve cross-feature history while removing its claim association.
+    if (existingTables.has('Notification')) {
+      await tx.query('UPDATE Notification SET claimId = NULL WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('MessageLog')) {
+      await tx.query('UPDATE MessageLog SET claimId = NULL WHERE claimId = ?', [claimId]);
+    }
+    if (existingTables.has('SupportTicket')) {
+      await tx.query('UPDATE SupportTicket SET claimId = NULL WHERE claimId = ?', [claimId]);
+    }
+
+    const result = await tx.query('DELETE FROM Claim WHERE id = ?', [claimId]);
+    if (!result.affectedRows) {
+      throw new AppError('Claim not found.', 404, 'CLAIM_NOT_FOUND');
+    }
+
+    return files;
+  });
+
+  await removeClaimFiles(uploadedFiles);
+  res.status(204).end();
+}
+
 export async function updateClaim(req, res) {
   const body = parseOrThrow(updateClaimSchema, req.body);
+  const requestedStage = body.status === 'rejected' || body.stage === 8 ? 8 : body.stage;
+  const requestedStatus = body.stage === 8 || body.status === 'rejected' ? 'rejected' : body.status;
   await ensureCustomerProfileColumns();
 
   const claim = await loadFullClaim(req.params.id);
@@ -286,13 +469,17 @@ export async function updateClaim(req, res) {
       updateFields.push('assignedAdminId = ?');
       updateParams.push(body.assignedAdminId);
     }
-    if (body.stage !== undefined) {
+    if (requestedStage !== undefined) {
       updateFields.push('stage = ?');
-      updateParams.push(body.stage);
+      updateParams.push(requestedStage);
     }
-    if (body.status !== undefined) {
+    if (body.priority !== undefined) {
+      updateFields.push('priority = ?');
+      updateParams.push(body.priority);
+    }
+    if (requestedStatus !== undefined) {
       updateFields.push('status = ?');
-      updateParams.push(body.status);
+      updateParams.push(requestedStatus);
     }
 
     if (updateFields.length > 0) {
@@ -378,7 +565,7 @@ export async function updateClaim(req, res) {
     }
 
     if (body.flightInfo) {
-      const allowedFlightFields = ['passengerName', 'airline', 'flightNumber', 'flightDate', 'scheduledTime', 'origin', 'destination', 'route', 'pnrCode', 'ticketNumber', 'ticketAmount', 'flightClass', 'rawText'];
+      const allowedFlightFields = ['passengerName', 'airline', 'flightNumber', 'flightDate', 'scheduledTime', 'ticketIssueDate', 'origin', 'destination', 'route', 'pnrCode', 'ticketNumber', 'ticketAmount', 'flightClass', 'rawText'];
       const providedFlightFields = allowedFlightFields.filter((field) => body.flightInfo[field] !== undefined);
       const flightRows = await tx.query('SELECT id FROM FlightInfo WHERE claimId = ? LIMIT 1', [claim.id]);
       if (flightRows.length && providedFlightFields.length) {
@@ -413,10 +600,10 @@ export async function updateClaim(req, res) {
     }
 
     // Write claim status history if status changed
-    if (body.status && body.status !== claim.status) {
+    if (requestedStatus && requestedStatus !== claim.status) {
       await tx.query(
         'INSERT INTO ClaimStatusHistory (id, claimId, fromStatus, toStatus, note) VALUES (?, ?, ?, ?, ?)',
-        [`clsh-${randomUUID()}`, claim.id, claim.status, body.status, 'وضعیت پرونده توسط کارشناس بروزرسانی شد.']
+        [`clsh-${randomUUID()}`, claim.id, claim.status, requestedStatus, 'وضعیت پرونده توسط کارشناس بروزرسانی شد.']
       );
 
       // Create notification
@@ -425,7 +612,7 @@ export async function updateClaim(req, res) {
         [
           `clnot-${randomUUID()}`,
           claim.id,
-          `وضعیت پرونده ${claim.trackingCode} به «${body.status}» تغییر یافت.`,
+          `وضعیت پرونده ${claim.trackingCode} به «${requestedStatus}» تغییر یافت.`,
         ]
       );
     }
@@ -433,10 +620,11 @@ export async function updateClaim(req, res) {
     return loadFullClaim(claim.id, tx);
   });
 
-  const stageChanged = body.stage !== undefined && Number(body.stage) !== Number(claim.stage);
-  if (stageChanged) {
-    const progressLabel = claimStageLabels[body.stage] || body.stage;
-    await sendClaimStageSms(updatedClaim, progressLabel);
+  const stageChanged = requestedStage !== undefined && Number(requestedStage) !== Number(claim.stage);
+  const statusChanged = requestedStatus !== undefined && requestedStatus !== claim.status;
+  if (stageChanged || (statusChanged && requestedStatus === 'rejected')) {
+    const progressLabel = claimStageLabels[requestedStage] || requestedStage;
+    await sendClaimStageSmsBestEffort(updatedClaim, progressLabel);
   }
 
   res.json(mapClaimForAdmin(updatedClaim));
@@ -536,7 +724,11 @@ export async function updateClaimStatus(req, res) {
   assertCanAccessClaim(req.admin, claim);
 
   const updatedClaim = await transaction(async (tx) => {
-    await tx.query('UPDATE Claim SET status = ? WHERE id = ?', [status, claim.id]);
+    if (status === 'rejected') {
+      await tx.query('UPDATE Claim SET status = ?, stage = 8 WHERE id = ?', [status, claim.id]);
+    } else {
+      await tx.query('UPDATE Claim SET status = ? WHERE id = ?', [status, claim.id]);
+    }
 
     if (status !== claim.status) {
       await tx.query(
@@ -552,6 +744,13 @@ export async function updateClaimStatus(req, res) {
 
     return loadFullClaim(claim.id, tx);
   });
+
+  if (
+    status === 'rejected' &&
+    (status !== claim.status || Number(claim.stage) !== 8)
+  ) {
+    await sendClaimStageSmsBestEffort(updatedClaim, claimStageLabels[8], { templateKey: 'rejected' });
+  }
 
   res.json(mapClaimForAdmin(updatedClaim));
 }
